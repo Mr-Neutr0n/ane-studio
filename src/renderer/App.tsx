@@ -2,11 +2,11 @@ import {
   Activity,
   AlertTriangle,
   ArrowUp,
-  Bot,
   Box,
   Check,
   ChevronDown,
   CircleGauge,
+  CircuitBoard,
   Cpu,
   Download,
   ExternalLink,
@@ -290,7 +290,7 @@ function App(): React.JSX.Element {
     return (
       <main className="boot-screen">
         <div className="brand-mark large">
-          <Zap size={28} />
+          <CircuitBoard size={28} />
         </div>
         <h1>ANE Studio</h1>
         <p>{error || "Starting the local model worker..."}</p>
@@ -305,14 +305,17 @@ function App(): React.JSX.Element {
         <div className="window-drag" />
         <div className="brand">
           <div className="brand-mark">
-            <Zap size={17} />
+            <CircuitBoard size={17} />
           </div>
           <div>
             <strong>ANE Studio</strong>
-            <span>Local model lab</span>
+            <span>Apple Silicon model lab</span>
           </div>
         </div>
-        <div className="sidebar-label">Models</div>
+        <div className="sidebar-label">
+          <span>Model bench</span>
+          <small>{modelList.length}</small>
+        </div>
         <div className="model-list">
           {modelList.map((model) => {
             const curated = "description" in model;
@@ -333,7 +336,7 @@ function App(): React.JSX.Element {
                   <strong>{curated ? model.label : model.id.split("/").at(-1)}</strong>
                   <small>
                     {record?.state === "ready"
-                      ? "Core ML ready"
+                      ? `Ready · ${parameterLabel(record.parameterCount || (curated ? model.parameters : undefined))}`
                       : curated
                         ? parameterLabel(model.parameters)
                         : stateLabel(record)}
@@ -379,13 +382,26 @@ function App(): React.JSX.Element {
 
       <main className="workspace">
         <header className="topbar">
-          <div>
+          <div className="model-heading">
             <div className="eyebrow">{selectedId}</div>
-            <h1>{modelName}</h1>
+            <div className="model-title-row">
+              <h1>{modelName}</h1>
+              <span className={`header-state ${isReady ? "ready" : "idle"}`}>
+                {isReady ? "Parity passed" : stateLabel(selectedRecord)}
+              </span>
+            </div>
+            <p>
+              {selectedCurated?.description ||
+                "A local Hugging Face checkpoint prepared for Core ML."}
+            </p>
           </div>
           <div className="top-actions">
             <span className="local-pill">
-              <ShieldCheck size={14} /> Local only
+              <ShieldCheck size={14} />
+              <span>
+                <small>Privacy</small>
+                <strong>Local only</strong>
+              </span>
             </span>
             {selectedRecord && (
               <button
@@ -566,6 +582,7 @@ function ChatView(props: {
     <section className="chat-view">
       <div className="chat-toolbar">
         <div className="policy-select">
+          <span className="toolbar-label">Compute route</span>
           <Zap size={14} />
           <select
             value={props.policy}
@@ -579,12 +596,16 @@ function ChatView(props: {
           </select>
           <ChevronDown size={13} />
         </div>
-        <span>{props.ready ? "Core ML session" : "Waiting for conversion"}</span>
+        <span className={`session-state ${props.ready ? "ready" : ""}`}>
+          <i /> {props.ready ? "Core ML session ready" : "Waiting for conversion"}
+        </span>
       </div>
       <div className="messages">
         {props.messages.map((message, index) => (
           <article className={`message ${message.role}`} key={`${message.role}-${index}`}>
-            <div className="avatar">{message.role === "assistant" ? <Bot size={17} /> : "H"}</div>
+            <div className="avatar">
+              {message.role === "assistant" ? <CircuitBoard size={16} /> : "H"}
+            </div>
             <div>
               <span>{message.role === "assistant" ? "Model" : "You"}</span>
               <p>{message.content || <LoaderCircle className="spin" size={16} />}</p>
@@ -612,7 +633,12 @@ function ChatView(props: {
         <button disabled={!props.ready || !props.prompt.trim() || props.busy} onClick={props.send}>
           <ArrowUp size={17} />
         </button>
-        <small>Enter to send · prompts stay on this Mac</small>
+        <small>
+          <span>Return to send · Shift + Return for a new line</span>
+          <span>
+            <ShieldCheck size={10} /> Stays on this Mac
+          </span>
+        </small>
       </div>
     </section>
   );
@@ -627,6 +653,10 @@ function TestsView(props: {
   const fastest = props.report?.policies
     .filter((item) => item.valid && item.tokensPerSecond)
     .sort((a, b) => (b.tokensPerSecond || 0) - (a.tokensPerSecond || 0))[0];
+  const maxThroughput = Math.max(
+    1,
+    ...(props.report?.policies.map((item) => item.tokensPerSecond || 0) || []),
+  );
   return (
     <section className="test-view">
       <div className="test-intro">
@@ -712,8 +742,17 @@ function TestsView(props: {
                   <span>
                     {result.medianTokenMs ? `${result.medianTokenMs.toFixed(1)} ms` : "-"}
                   </span>
-                  <span>
-                    {result.tokensPerSecond ? `${result.tokensPerSecond.toFixed(1)} tok/s` : "-"}
+                  <span className="throughput-cell">
+                    <strong>
+                      {result.tokensPerSecond ? `${result.tokensPerSecond.toFixed(1)} tok/s` : "-"}
+                    </strong>
+                    <i>
+                      <b
+                        style={{
+                          width: `${((result.tokensPerSecond || 0) / maxThroughput) * 100}%`,
+                        }}
+                      />
+                    </i>
                   </span>
                   <span>
                     <Evidence placement={planned} />
