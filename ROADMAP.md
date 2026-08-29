@@ -10,7 +10,8 @@
 - [x] Streaming Core ML chat
 - [x] Four-policy interactive benchmark
 - [x] Planned placement through `MLComputePlan`
-- [x] M5 end-to-end LFM2.5-230M validation
+- [x] M5 end-to-end LFM2.5-230M and LFM2.5-350M validation
+- [x] Revision-specific rejection for failed SmolLM2-135M and Qwen2.5-0.5B conversions
 
 ## Next
 

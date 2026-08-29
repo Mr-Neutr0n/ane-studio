@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import gc
 import json
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +46,7 @@ def _patch_trace_gaps(
         mask = torch.triu(
             torch.full(
                 (sequence_length, sequence_length),
-                torch.finfo(torch.float32).min,
+                -10_000.0,
                 dtype=torch.float32,
             ),
             diagonal=1,
@@ -202,10 +205,7 @@ def convert_model(
         compute_units=ct.ComputeUnit.CPU_AND_NE,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
-        import shutil
-
-        shutil.rmtree(output)
+    shutil.rmtree(output, ignore_errors=True)
     converted.save(output)
     del converted, traced, wrapper, model
     gc.collect()
@@ -239,6 +239,18 @@ def convert_model(
     return {"parity": parity, "position": position}
 
 
+@contextmanager
+def _managed_compile_directory(parent: Path):
+    parent.mkdir(parents=True, exist_ok=True)
+    previous = tempfile.tempdir
+    with tempfile.TemporaryDirectory(prefix=".ane-studio-compile-", dir=parent) as root:
+        tempfile.tempdir = root
+        try:
+            yield Path(root)
+        finally:
+            tempfile.tempdir = previous
+
+
 class CoreMLRuntime:
     def __init__(self, package: Path, source: Path, sequence_length: int, policy: str) -> None:
         ct, np, _, auto = _imports()
@@ -251,9 +263,11 @@ class CoreMLRuntime:
         unit_name = POLICIES.get(policy)
         if not unit_name:
             raise ValueError(f"Unknown compute policy: {policy}")
-        self.model = ct.models.MLModel(
-            str(package), compute_units=getattr(ct.ComputeUnit, unit_name)
-        )
+        with _managed_compile_directory(package.parent):
+            self.model = ct.models.MLModel(
+                str(package),
+                compute_units=getattr(ct.ComputeUnit, unit_name),
+            )
 
     def prompt_text(self, messages: list[dict[str, str]]) -> str:
         try:
@@ -322,27 +336,34 @@ def planned_placement(package: Path, policy: str) -> dict[str, Any]:
         from coremltools.models.compute_plan import MLComputePlan
         from coremltools.models.utils import compile_model
 
-        compiled = compile_model(str(package))
         unit_name = POLICIES[policy]
-        plan = MLComputePlan.load_from_path(
-            compiled, compute_units=getattr(ct.ComputeUnit, unit_name)
-        )
-        counts = {"CPU": 0, "GPU": 0, "ANE": 0, "unknown": 0}
-        structure = plan.model_structure.program
-        for function in structure.functions.values():
-            for operation in function.block.operations:
-                if operation.operator_name.startswith("const"):
-                    continue
-                usage = plan.get_compute_device_usage_for_mlprogram_operation(operation)
-                device = getattr(usage, "preferred_compute_device", None)
-                if isinstance(device, MLNeuralEngineComputeDevice):
-                    counts["ANE"] += 1
-                elif isinstance(device, MLGPUComputeDevice):
-                    counts["GPU"] += 1
-                elif isinstance(device, MLCPUComputeDevice):
-                    counts["CPU"] += 1
-                else:
-                    counts["unknown"] += 1
+        compiled: str | None = None
+        with _managed_compile_directory(package.parent):
+            try:
+                compiled = compile_model(str(package))
+                plan = MLComputePlan.load_from_path(
+                    compiled,
+                    compute_units=getattr(ct.ComputeUnit, unit_name),
+                )
+                counts = {"CPU": 0, "GPU": 0, "ANE": 0, "unknown": 0}
+                structure = plan.model_structure.program
+                for function in structure.functions.values():
+                    for operation in function.block.operations:
+                        if operation.operator_name.startswith("const"):
+                            continue
+                        usage = plan.get_compute_device_usage_for_mlprogram_operation(operation)
+                        device = getattr(usage, "preferred_compute_device", None)
+                        if isinstance(device, MLNeuralEngineComputeDevice):
+                            counts["ANE"] += 1
+                        elif isinstance(device, MLGPUComputeDevice):
+                            counts["GPU"] += 1
+                        elif isinstance(device, MLCPUComputeDevice):
+                            counts["CPU"] += 1
+                        else:
+                            counts["unknown"] += 1
+            finally:
+                if compiled:
+                    shutil.rmtree(compiled, ignore_errors=True)
         return {
             "evidence": "planned",
             "policy": policy,

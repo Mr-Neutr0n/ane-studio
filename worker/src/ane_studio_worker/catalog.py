@@ -12,6 +12,16 @@ CURATED_MODELS = (
         "recommended": True,
     },
     {
+        "id": "LiquidAI/LFM2.5-350M",
+        "label": "LFM2.5 350M",
+        "description": "A larger LFM2 edge checkpoint for testing architecture scaling.",
+        "parameters": 354_483_968,
+        "architecture": "Lfm2ForCausalLM",
+        "license": "LFM Open License 1.0",
+        "releasedAt": "2026-03-31",
+        "recommended": False,
+    },
+    {
         "id": "WeiboAI/VibeThinker-3B",
         "label": "VibeThinker 3B",
         "description": "A compact reasoning and coding model based on Qwen2.",
@@ -27,4 +37,15 @@ CURATED_MODELS = (
 SUPPORTED_ARCHITECTURES = {
     "Lfm2ForCausalLM": "lfm2",
     "Qwen2ForCausalLM": "qwen2",
+}
+
+KNOWN_FAILED_REVISIONS = {
+    (
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+    ): "The current Llama conversion produces invalid zero logits in Core ML.",
+    (
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        "7ae557604adf67be50417f59c2c2f167def9a775",
+    ): "The current FP16 conversion fails logit parity and top-token agreement.",
 }

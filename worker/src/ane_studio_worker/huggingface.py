@@ -6,7 +6,7 @@ from typing import Any
 
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
-from .catalog import SUPPORTED_ARCHITECTURES
+from .catalog import KNOWN_FAILED_REVISIONS, SUPPORTED_ARCHITECTURES
 
 
 def token() -> str | None:
@@ -27,6 +27,14 @@ def inspect_model(model_id: str) -> dict[str, Any]:
         parameter_count = int(info.safetensors.total)
     card = info.card_data.to_dict() if info.card_data else {}
     license_name = card.get("license") or "unknown"
+    known_failure = KNOWN_FAILED_REVISIONS.get((model_id, info.sha))
+    supported = architecture in SUPPORTED_ARCHITECTURES and known_failure is None
+    if known_failure:
+        reason = known_failure
+    elif architecture not in SUPPORTED_ARCHITECTURES:
+        reason = f"No converter is registered for {architecture}."
+    else:
+        reason = None
     return {
         "id": model_id,
         "architecture": architecture,
@@ -35,11 +43,9 @@ def inspect_model(model_id: str) -> dict[str, Any]:
         "revision": info.sha,
         "private": info.private,
         "gated": bool(info.gated),
-        "supported": architecture in SUPPORTED_ARCHITECTURES,
+        "supported": supported,
         "adapter": SUPPORTED_ARCHITECTURES.get(architecture),
-        "reason": None
-        if architecture in SUPPORTED_ARCHITECTURES
-        else f"No converter is registered for {architecture}.",
+        "reason": reason,
     }
 
 

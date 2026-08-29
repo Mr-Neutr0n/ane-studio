@@ -22,13 +22,27 @@ The app rejects unsupported architectures before downloading weights. A model na
 - The dynamic causal-mask helper becomes a fixed upper-triangular additive mask.
 - The short-convolution fallback uses the model's declared kernel size as a trace constant.
 
-Tested checkpoint: `LiquidAI/LFM2.5-230M`.
+Tested checkpoints:
+
+- `LiquidAI/LFM2.5-230M`: passed at revision `40cb2ad3b3044d5a41eee083a6103c8b523afa45`.
+- `LiquidAI/LFM2.5-350M`: passed at revision `9e6c6ccf47cd318696e137d381a7ded8fe4df09f`.
 
 ### Qwen2
 
 `Qwen2ForCausalLM` uses eager grouped-query attention and a fixed causal mask during tracing.
 
-The adapter passed conversion and parity with `yujiepan/qwen2-tiny-random`. `WeiboAI/VibeThinker-3B` uses the same architecture, but its full checkpoint has not been converted on the 16 GB development Mac because source and FP16 artifact storage require more free disk than was available.
+The adapter passed conversion and parity with `yujiepan/qwen2-tiny-random`. Architecture support does not imply that a larger checkpoint passes. `Qwen/Qwen2.5-0.5B-Instruct` converted structurally but failed parity with cosine `0.903762` and a different top token.
+
+`WeiboAI/VibeThinker-3B` uses the same architecture, but its full checkpoint has not been converted on the 16 GB development Mac because source and FP16 artifact storage require more free disk and memory than were available.
+
+## Known failed checkpoints
+
+Failures are pinned to exact Hugging Face revisions in `catalog.py` so the app rejects them before another large download:
+
+- `HuggingFaceTB/SmolLM2-135M-Instruct` at `12fd25f77366fa6b3b4b768ec3050bf629380bac`: the converted Llama graph returned zero logits. Llama remains unregistered.
+- `Qwen/Qwen2.5-0.5B-Instruct` at `7ae557604adf67be50417f59c2c2f167def9a775`: logit and top-token parity failed.
+
+A new model revision or adapter fix can remove a block only after repeating conversion and parity on the Mac.
 
 ## Networked smoke commands
 
@@ -39,6 +53,14 @@ Test the small LFM2 checkpoint end to end:
 ```bash
 printf '%s\n' \
   '{"id":"lfm","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-230M","sequenceLength":64}}' \
+  | uv run --project worker --extra coreml --locked ane-studio-worker
+```
+
+Test the second validated LFM2 checkpoint:
+
+```bash
+printf '%s\n' \
+  '{"id":"lfm350","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-350M","sequenceLength":64}}' \
   | uv run --project worker --extra coreml --locked ane-studio-worker
 ```
 

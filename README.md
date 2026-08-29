@@ -23,6 +23,7 @@ The first curated checkpoints are:
 | Model | Architecture | Status |
 | --- | --- | --- |
 | [`LiquidAI/LFM2.5-230M`](https://huggingface.co/LiquidAI/LFM2.5-230M) | LFM2 hybrid convolution and attention | Tested end to end on an M5 Mac |
+| [`LiquidAI/LFM2.5-350M`](https://huggingface.co/LiquidAI/LFM2.5-350M) | LFM2 hybrid convolution and attention | Tested end to end on an M5 Mac |
 | [`WeiboAI/VibeThinker-3B`](https://huggingface.co/WeiboAI/VibeThinker-3B) | Qwen2 | Adapter tested with a tiny Qwen2 fixture; full 3B conversion needs more free disk and memory |
 
 Other checkpoints using those exact Transformers architectures can be inspected from the model ID field. Unsupported architectures fail before downloading weights.
@@ -48,6 +49,21 @@ One interactive policy run produced:
 | Automatic | 17.4 ms | 57.5 tok/s | 79 ANE, 574 GPU, 5 CPU operations |
 
 These are development smoke numbers, not publication-grade results. The current runtime recomputes a fixed context without a KV cache, and the policy test runs sequentially in one worker process. The result is useful for local backend selection, not a universal hardware ranking.
+
+## Additional small-model tests
+
+The same M5 path was exercised against four more public checkpoints:
+
+| Model | Outcome | Evidence |
+| --- | --- | --- |
+| `LiquidAI/LFM2.5-350M` | Passed | Cosine `0.999706`, top token matched, 709.4 MB artifact, chat returned `Hello!` |
+| `yujiepan/qwen2-tiny-random` | Passed as a converter fixture | Cosine `0.999995`, top token matched |
+| `Qwen/Qwen2.5-0.5B-Instruct` | Failed and blocked | Cosine `0.903762`; Core ML selected a different top token |
+| `HuggingFaceTB/SmolLM2-135M-Instruct` | Failed and unsupported | The converted Llama graph returned zero logits |
+
+`google/gemma-3-270m-it` could not be tested without accepting Google's gated model terms. Failed checkpoints remain unavailable for chat because the parity gate held.
+
+The LFM2.5-350M quick comparison measured 81.5 tok/s on CPU+GPU and 47.9 tok/s on CPU+ANE. Its compute plan preferred ANE for 699 of 716 non-constant operations under CPU+ANE. Observed placement was not captured.
 
 ## Requirements
 
@@ -101,6 +117,7 @@ That command runs TypeScript checks, renderer tests, Python worker tests, the pr
 
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/model-support.md`](docs/model-support.md)
+- [`docs/compatibility-results.md`](docs/compatibility-results.md)
 - [`docs/privacy.md`](docs/privacy.md)
 - [`MODEL_LICENSES.md`](MODEL_LICENSES.md)
 

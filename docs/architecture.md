@@ -61,7 +61,7 @@ The app records three levels:
 2. Planned: `MLComputePlan` anticipated operation placement.
 3. Observed: Instruments activity overlapped a signed inference interval.
 
-The current app automates the first two. It records observed placement as not captured. Timing runs and profiling runs must remain separate because Instruments changes latency.
+The current app automates the first two. It records observed placement as not captured. Timing runs and profiling runs must remain separate because Instruments changes latency. The worker redirects Core ML compilation into a managed directory beside the model package and removes that directory after model loading or compute-plan inspection.
 
 ## Local storage
 
@@ -70,7 +70,7 @@ The main process sets the application data directory to `~/Library/Application S
 ```text
 models/<slug>/
   source/                  pinned Hugging Face snapshot
-  artifacts/model.mlpackage/
+  artifacts/model.mlpackage/   portable converted package
   results/benchmark-*.json
   manifest.json
 ```
