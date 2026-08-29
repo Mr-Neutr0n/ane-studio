@@ -1,0 +1,80 @@
+{
+  "name": "ane-studio",
+  "version": "0.1.0",
+  "description": "A local lab for converting, testing, and chatting with small Hugging Face language models on Apple Silicon.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "author": "Hari Krishna",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package": "bun run build && electron-builder --mac dir",
+    "test": "vitest run",
+    "test:e2e": "bun run build && playwright test",
+    "typecheck": "tsc --noEmit",
+    "check": "biome check .",
+    "format": "biome check --write .",
+    "worker:setup": "uv sync --project worker --extra coreml --locked",
+    "worker:test": "uv run --project worker --locked pytest",
+    "verify": "./scripts/verify"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "latest",
+    "@electron-toolkit/utils": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "@playwright/test": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "5.1.1",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "electron-vite": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vite": "7.3.6",
+    "vitest": "latest"
+  },
+  "build": {
+    "appId": "dev.harikrishna.anestudio",
+    "productName": "ANE Studio",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "worker",
+        "to": "worker",
+        "filter": [
+          "pyproject.toml",
+          "uv.lock",
+          "src/**/*"
+        ]
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "identity": null,
+      "minimumSystemVersion": "15.0"
+    }
+  }
+}
