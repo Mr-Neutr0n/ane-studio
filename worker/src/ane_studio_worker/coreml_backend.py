@@ -34,61 +34,82 @@ def _imports() -> tuple[Any, Any, Any, Any]:
     return ct, np, torch, (AutoModelForCausalLM, AutoTokenizer)
 
 
+@contextmanager
 def _patch_trace_gaps(
     architecture: str,
     sequence_length: int,
     torch: Any,
     *,
     convolution_kernel_size: int = 3,
-) -> None:
+):
+    # Valid-token outputs are unchanged for contiguous, right-padded input only.
+    # Pads occur in the causal future of the selected token.
+    import importlib
+
+    module_names = {
+        "Lfm2ForCausalLM": "lfm2",
+        "Qwen2ForCausalLM": "qwen2",
+        "LlamaForCausalLM": "llama",
+    }
+    family = module_names.get(architecture)
+    if family is None:
+        raise ValueError(f"No trace adapter for {architecture}.")
+    modeling = importlib.import_module(f"transformers.models.{family}.modeling_{family}")
     mask = torch.zeros(1, 1, sequence_length, sequence_length, dtype=torch.float32)
     if sequence_length > 1:
         mask = torch.triu(
-            torch.full(
-                (sequence_length, sequence_length),
-                -10_000.0,
-                dtype=torch.float32,
-            ),
+            torch.full((sequence_length, sequence_length), -10_000.0, dtype=torch.float32),
             diagonal=1,
         )[None, None]
-    if architecture == "Lfm2ForCausalLM":
-        import torch.nn.functional as functional
-        import transformers.models.lfm2.modeling_lfm2 as modeling
-
+    original_mask = modeling.create_causal_mask
+    original_conv = None
+    try:
         modeling.create_causal_mask = lambda *args, **kwargs: mask
+        if architecture == "Lfm2ForCausalLM":
+            import torch.nn.functional as functional
 
-        def traceable_causal_conv1d(
-            hidden_states: Any,
-            weight: Any,
-            bias: Any = None,
-            activation: str | None = None,
-            **kwargs: Any,
-        ) -> Any:
-            sequence = hidden_states.shape[-1]
-            output = functional.conv1d(
-                hidden_states.to(weight.dtype),
-                weight=weight.unsqueeze(1),
-                bias=bias,
-                padding=convolution_kernel_size - 1,
-                groups=weight.shape[0],
-            )[:, :, :sequence]
-            if activation is not None:
-                output = modeling.ACT2FN[activation](output)
-            return output.to(hidden_states.dtype)
+            original_conv = modeling.causal_conv1d_fn
 
-        modeling.causal_conv1d_fn = traceable_causal_conv1d
-    elif architecture == "Qwen2ForCausalLM":
-        import transformers.models.qwen2.modeling_qwen2 as modeling
+            def traceable_causal_conv1d(
+                hidden_states: Any,
+                weight: Any,
+                bias: Any = None,
+                activation: str | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                sequence = hidden_states.shape[-1]
+                output = functional.conv1d(
+                    hidden_states.to(weight.dtype),
+                    weight=weight.unsqueeze(1),
+                    bias=bias,
+                    padding=convolution_kernel_size - 1,
+                    groups=weight.shape[0],
+                )[:, :, :sequence]
+                if activation is not None:
+                    output = modeling.ACT2FN[activation](output)
+                return output.to(hidden_states.dtype)
 
-        if hasattr(modeling, "create_causal_mask"):
-            modeling.create_causal_mask = lambda *args, **kwargs: mask
+            modeling.causal_conv1d_fn = traceable_causal_conv1d
+        yield
+    finally:
+        modeling.create_causal_mask = original_mask
+        if architecture == "Lfm2ForCausalLM":
+            modeling.causal_conv1d_fn = original_conv
 
 
 def _inputs(tokenizer: Any, text: str, sequence_length: int, np: Any) -> tuple[dict[str, Any], int]:
     encoded = tokenizer(text, add_special_tokens=False, truncation=True, max_length=sequence_length)
-    token_ids = list(encoded["input_ids"])
+    return _token_inputs(tokenizer, list(encoded["input_ids"]), sequence_length, np)
+
+
+def _token_inputs(
+    tokenizer: Any, token_ids: list[int], sequence_length: int, np: Any
+) -> tuple[dict[str, Any], int]:
     if not token_ids:
-        token_ids = [tokenizer.bos_token_id or tokenizer.eos_token_id or 0]
+        first = tokenizer.bos_token_id
+        if first is None:
+            first = tokenizer.eos_token_id
+        token_ids = [first if first is not None else 0]
     token_ids = token_ids[-sequence_length:]
     position = len(token_ids) - 1
     pad = tokenizer.pad_token_id
@@ -104,12 +125,62 @@ def _inputs(tokenizer: Any, text: str, sequence_length: int, np: Any) -> tuple[d
 
 
 def _cosine(left: Any, right: Any, np: Any) -> float:
-    a = left.astype(np.float32).reshape(-1)
-    b = right.astype(np.float32).reshape(-1)
+    if left.shape != right.shape or left.size == 0:
+        return 0.0
+    a = left.astype(np.float64).reshape(-1)
+    b = right.astype(np.float64).reshape(-1)
+    if not np.isfinite(a).all() or not np.isfinite(b).all():
+        return 0.0
     denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    # Zero logits are not evidence of a functioning language model.
     if denominator == 0:
-        return 1.0 if np.array_equal(a, b) else 0.0
-    return float(np.dot(a, b) / denominator)
+        return 0.0
+    return float(np.clip(np.dot(a, b) / denominator, -1.0, 1.0))
+
+
+def _parity_metrics(reference: Any, prediction: Any, np: Any) -> dict[str, Any]:
+    valid = bool(
+        reference.shape == prediction.shape
+        and reference.size > 0
+        and np.isfinite(reference).all()
+        and np.isfinite(prediction).all()
+        and np.linalg.norm(reference.astype(np.float64)) > 0
+        and np.linalg.norm(prediction.astype(np.float64)) > 0
+    )
+    cosine = _cosine(reference, prediction, np)
+    source_token = int(reference.argmax()) if valid else None
+    coreml_token = int(prediction.argmax()) if valid else None
+    matches = valid and source_token == coreml_token
+    metrics = {
+        "status": "passed" if cosine >= 0.999 and matches else "failed",
+        "cosineSimilarity": cosine,
+        "topTokenMatches": matches,
+    }
+    if valid:
+        metrics.update(
+            maximumAbsoluteError=float(
+                np.max(np.abs(reference.astype(np.float64) - prediction.astype(np.float64)))
+            ),
+            sourceToken=source_token,
+            coremlToken=coreml_token,
+        )
+    return metrics
+
+
+def _fp16_matrix_operation(operation: Any) -> bool:
+    # Preserve FP32 normalization, softmax and residual math. Fixed-position RoPE
+    # folds to constants before this pass. All surviving matmuls use FP16.
+    # Casting RMS statistics to FP16 can overflow x**2 and collapse logits to zero.
+    return operation.op_type in {"linear", "matmul"}
+
+
+def _compute_precision(architecture: str, ct: Any) -> Any:
+    if architecture == "Qwen2ForCausalLM":
+        # Qwen2.5's position-zero fixture fails even with FP16 linear only.
+        return ct.precision.FLOAT32
+    if architecture == "LlamaForCausalLM":
+        return ct.transform.FP16ComputePrecision(op_selector=_fp16_matrix_operation)
+    return ct.precision.FLOAT16
 
 
 def convert_model(
@@ -123,27 +194,27 @@ def convert_model(
 ) -> dict[str, Any]:
     ct, np, torch, auto = _imports()
     AutoModelForCausalLM, AutoTokenizer = auto
+    mixed_precision = architecture == "LlamaForCausalLM"
+    fp32_conversion = architecture == "Qwen2ForCausalLM"
+    fp32_source = mixed_precision or fp32_conversion
     event(
         write,
         request_id,
         "progress",
         stage="loading",
         progress=0.38,
-        message="Loading FP16 weights",
+        message="Loading FP32 source weights" if fp32_source else "Loading FP16 weights",
     )
     config = json.loads((source / "config.json").read_text(encoding="utf-8"))
-    _patch_trace_gaps(
-        architecture,
-        sequence_length,
-        torch,
-        convolution_kernel_size=int(config.get("conv_L_cache", 3)),
+    tokenizer = AutoTokenizer.from_pretrained(
+        source, local_files_only=True, trust_remote_code=False
     )
-    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
     tokenizer.padding_side = "right"
     model = AutoModelForCausalLM.from_pretrained(
         source,
         local_files_only=True,
-        dtype=torch.float16,
+        trust_remote_code=False,
+        dtype=torch.float32 if fp32_source else torch.float16,
         attn_implementation="eager",
         low_cpu_mem_usage=True,
     ).eval()
@@ -154,22 +225,41 @@ def convert_model(
             self.wrapped = wrapped
 
         def forward(self, input_ids: Any, attention_mask: Any, position: Any) -> Any:
-            logits = self.wrapped(
+            hidden = self.wrapped.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 use_cache=False,
                 return_dict=False,
             )[0]
-            index = position.to(torch.int64).reshape(1, 1, 1).expand(1, 1, logits.shape[-1])
-            return torch.gather(logits, 1, index).squeeze(1)
+            # Select before the vocabulary projection. This avoids materializing
+            # sequence_length vocabulary vectors on every decode step.
+            last = torch.index_select(hidden, 1, position.to(torch.int64)).squeeze(1)
+            return self.wrapped.lm_head(last)
 
-    prompt = "The capital of France is"
-    feed, position = _inputs(tokenizer, prompt, sequence_length, np)
-    torch_feed = (
-        torch.from_numpy(feed["input_ids"]).to(torch.int64),
-        torch.from_numpy(feed["attention_mask"]).to(torch.int64),
-        torch.from_numpy(feed["position"]).to(torch.int64),
-    )
+    prompts = [
+        ("completion", "The capital of France is"),
+        ("short", "The opposite of hot is"),
+        ("first-token", "Hello"),
+        ("context-boundary", "A short sentence about the sky and the sea. " * sequence_length),
+    ]
+    feeds = [_inputs(tokenizer, text, sequence_length, np)[0] for _, text in prompts]
+    torch_feeds = [
+        tuple(
+            torch.from_numpy(feed[key]).to(torch.int64)
+            for key in ("input_ids", "attention_mask", "position")
+        )
+        for feed in feeds
+    ]
+    references = []
+    # Use the original, unpatched Transformers forward as the parity reference.
+    with torch.no_grad():
+        for args in torch_feeds:
+            logits = model(
+                input_ids=args[0], attention_mask=args[1], use_cache=False, return_dict=False
+            )[0]
+            references.append(logits[:, int(args[2][0])].float().cpu().numpy().copy())
+        del logits
+
     wrapper = LastTokenModel(model).eval()
     event(
         write,
@@ -179,9 +269,20 @@ def convert_model(
         progress=0.48,
         message="Tracing a fixed-shape decoder",
     )
-    with torch.no_grad():
-        reference = wrapper(*torch_feed).float().cpu().numpy()
-        traced = torch.jit.trace(wrapper, torch_feed, strict=False, check_trace=False)
+    with (
+        torch.no_grad(),
+        _patch_trace_gaps(
+            architecture,
+            sequence_length,
+            torch,
+            convolution_kernel_size=int(config.get("conv_L_cache", 3)),
+        ),
+    ):
+        for reference, args in zip(references, torch_feeds, strict=True):
+            adapted = wrapper(*args).float().cpu().numpy()
+            if _parity_metrics(reference, adapted, np)["status"] != "passed":
+                raise RuntimeError("Trace adapter changed the source model output.")
+        traced = torch.jit.trace(wrapper, torch_feeds[0], strict=False, check_trace=False)
 
     event(
         write,
@@ -191,23 +292,25 @@ def convert_model(
         progress=0.58,
         message="Converting to a Core ML ML Program",
     )
-    converted = ct.convert(
-        traced,
-        convert_to="mlprogram",
-        inputs=[
-            ct.TensorType(name="input_ids", shape=(1, sequence_length), dtype=np.int32),
-            ct.TensorType(name="attention_mask", shape=(1, sequence_length), dtype=np.int32),
-            ct.TensorType(name="position", shape=(1,), dtype=np.int32),
-        ],
-        outputs=[ct.TensorType(name="logits")],
-        minimum_deployment_target=ct.target.macOS15,
-        compute_precision=ct.precision.FLOAT16,
-        compute_units=ct.ComputeUnit.CPU_AND_NE,
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    shutil.rmtree(output, ignore_errors=True)
-    converted.save(output)
-    del converted, traced, wrapper, model
+    # Do not compile the default compute policy while source/traced weights are
+    # resident. The CPU parity runtime loads only after those objects are freed.
+    with _managed_compile_directory(output.parent):
+        converted = ct.convert(
+            traced,
+            convert_to="mlprogram",
+            inputs=[
+                ct.TensorType(name="input_ids", shape=(1, sequence_length), dtype=np.int32),
+                ct.TensorType(name="attention_mask", shape=(1, sequence_length), dtype=np.int32),
+                ct.TensorType(name="position", shape=(1,), dtype=np.int32),
+            ],
+            outputs=[ct.TensorType(name="logits", dtype=np.float32)],
+            minimum_deployment_target=ct.target.macOS15,
+            compute_precision=_compute_precision(architecture, ct),
+            skip_model_load=True,
+        )
+        shutil.rmtree(output, ignore_errors=True)
+        converted.save(output)
+    del converted, traced, wrapper, model, adapted
     gc.collect()
 
     event(
@@ -216,27 +319,42 @@ def convert_model(
         "progress",
         stage="validating",
         progress=0.82,
-        message="Checking Core ML output against the source model",
+        message="Checking Core ML output against the unpatched source model",
     )
-    coreml_model = ct.models.MLModel(str(output), compute_units=ct.ComputeUnit.CPU_ONLY)
-    prediction = coreml_model.predict(feed)["logits"]
-    cosine = _cosine(reference, prediction, np)
-    maximum_error = float(
-        np.max(np.abs(reference.astype(np.float32) - prediction.astype(np.float32)))
-    )
-    source_token = int(reference.argmax(-1)[0])
-    coreml_token = int(prediction.argmax(-1)[0])
+    checks = []
+    with _managed_compile_directory(output.parent):
+        coreml_model = ct.models.MLModel(str(output), compute_units=ct.ComputeUnit.CPU_ONLY)
+    for (name, _), feed, reference in zip(prompts, feeds, references, strict=True):
+        prediction = coreml_model.predict(feed)["logits"]
+        checks.append(
+            {
+                "name": name,
+                "position": int(feed["position"][0]),
+                **_parity_metrics(reference, prediction, np),
+            }
+        )
     parity = {
-        "status": "passed" if cosine >= 0.999 and source_token == coreml_token else "failed",
-        "cosineSimilarity": cosine,
-        "maximumAbsoluteError": maximum_error,
-        "topTokenMatches": source_token == coreml_token,
-        "sourceToken": source_token,
-        "coremlToken": coreml_token,
+        **checks[0],
+        "status": "passed" if all(check["status"] == "passed" for check in checks) else "failed",
+        "cosineSimilarity": min(check["cosineSimilarity"] for check in checks),
+        "topTokenMatches": all(check["topTokenMatches"] for check in checks),
+        "converterVersion": 3,
+        "reference": "unpatched-transformers-fp32"
+        if fp32_source
+        else "unpatched-transformers-fp16",
+        "computePrecision": "fp32"
+        if fp32_conversion
+        else "fp16-matrices-fp32-sensitive-ops"
+        if mixed_precision
+        else "fp16",
+        "checks": checks,
     }
+    errors = [check["maximumAbsoluteError"] for check in checks if "maximumAbsoluteError" in check]
+    if errors:
+        parity["maximumAbsoluteError"] = max(errors)
     del coreml_model
     gc.collect()
-    return {"parity": parity, "position": position}
+    return {"parity": parity, "position": int(feeds[0]["position"][0])}
 
 
 @contextmanager
@@ -258,7 +376,9 @@ class CoreMLRuntime:
         self.ct = ct
         self.np = np
         self.sequence_length = sequence_length
-        self.tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            source, local_files_only=True, trust_remote_code=False
+        )
         self.tokenizer.padding_side = "right"
         unit_name = POLICIES.get(policy)
         if not unit_name:
@@ -287,17 +407,31 @@ class CoreMLRuntime:
     ) -> dict[str, Any]:
         text = self.prompt_text(messages)
         encoded = self.tokenizer(text, add_special_tokens=False)["input_ids"]
-        ids = list(encoded)[-(self.sequence_length - 1) :]
+        ids = list(encoded)
+        if len(ids) >= self.sequence_length:
+            raise ValueError(
+                f"The chat prompt uses {len(ids)} tokens, but this fixed graph has a "
+                f"{self.sequence_length}-token context. Shorten the prompt or start a new chat."
+            )
         generated: list[int] = []
         durations: list[float] = []
         eos = self.tokenizer.eos_token_id
         rng = self.np.random.default_rng(941731)
-        for _ in range(min(max_new_tokens, self.sequence_length - len(ids))):
-            current_text = self.tokenizer.decode(ids, skip_special_tokens=False)
-            feed, _ = _inputs(self.tokenizer, current_text, self.sequence_length, self.np)
+        capacity = self.sequence_length - len(ids)
+        stop_reason = "contextLimit" if capacity < max_new_tokens else "maxTokens"
+        for _ in range(min(max_new_tokens, capacity)):
+            feed, _ = _token_inputs(self.tokenizer, ids, self.sequence_length, self.np)
             started = time.perf_counter_ns()
             logits = self.model.predict(feed)["logits"].astype(self.np.float32)[0]
-            durations.append((time.perf_counter_ns() - started) / 1_000_000)
+            duration = (time.perf_counter_ns() - started) / 1_000_000
+            if (
+                logits.ndim != 1
+                or logits.size == 0
+                or not self.np.isfinite(logits).all()
+                or not self.np.any(logits)
+            ):
+                raise RuntimeError("Core ML returned invalid or zero logits.")
+            durations.append(duration)
             if temperature <= 0:
                 token_id = int(logits.argmax())
             else:
@@ -307,6 +441,7 @@ class CoreMLRuntime:
                 probabilities /= probabilities.sum()
                 token_id = int(rng.choice(len(probabilities), p=probabilities))
             if eos is not None and token_id == eos:
+                stop_reason = "eos"
                 break
             ids.append(token_id)
             generated.append(token_id)
@@ -317,6 +452,9 @@ class CoreMLRuntime:
         return {
             "text": output,
             "tokens": len(generated),
+            "stopReason": stop_reason,
+            "contextTokens": len(ids),
+            "sequenceLength": self.sequence_length,
             "firstTokenMs": durations[0] if durations else None,
             "medianTokenMs": float(self.np.median(durations)) if durations else None,
             "tokensPerSecond": 1000.0 / float(self.np.median(durations)) if durations else None,
@@ -391,10 +529,13 @@ def benchmark(
     reports = []
     messages = [{"role": "user", "content": prompt}]
     for policy in policies:
+        runtime = None
         try:
             runtime = CoreMLRuntime(package, source, sequence_length, policy)
             runtime.generate(messages, 1, 0)
             result = runtime.generate(messages, 8, 0)
+            runtime = None
+            gc.collect()
             reports.append(
                 {
                     "policy": policy,
@@ -430,6 +571,9 @@ def benchmark(
                     "error": f"{type(error).__name__}: {error}",
                 }
             )
+        finally:
+            del runtime
+            gc.collect()
     return {
         "modelId": model_id,
         "prompt": prompt,

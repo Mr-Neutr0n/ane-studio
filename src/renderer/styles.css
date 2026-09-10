@@ -76,6 +76,9 @@ select:focus-visible {
 }
 
 .boot-screen p {
+  max-width: 600px;
+  overflow-wrap: anywhere;
+  text-align: center;
   margin: 0 0 18px;
   color: #91a0b8;
   font-size: 12px;
@@ -198,6 +201,8 @@ select:focus-visible {
 }
 
 .model-list {
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -812,40 +817,92 @@ select:focus-visible {
   background: #e9edf3;
 }
 
-.progress-row {
-  position: absolute;
-  right: 18px;
-  bottom: -30px;
-  left: 18px;
+.notice-banner {
+  margin: 14px 38px 0;
+  padding: 11px 12px;
+  color: #186960;
+  border: 1px solid #9fcfc9;
+  border-radius: 7px;
+  background: #e3f4f1;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.operation-status {
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  flex: none;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+  margin: 14px 38px 0;
+  padding: 10px 12px;
+  color: #435066;
+  border: 1px solid #c5ced9;
+  border-radius: 7px;
+  background: var(--paper);
+  font-size: 11px;
+}
+
+.progress-copy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow-wrap: anywhere;
+}
+
+.progress-copy svg {
+  flex: none;
+}
+
+.operation-status progress {
+  width: 100%;
+  accent-color: var(--blue);
+}
+
+.model-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--red);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.generation-note {
+  max-width: 800px;
+  margin: 0 auto;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
-.progress-track {
-  height: 4px;
+.context-note {
+  flex: none;
+  margin: 5px 0 0;
+  color: #68758a;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
   overflow: hidden;
-  border-radius: 2px;
-  background: #cbd3de;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--blue), var(--aqua));
-  transition: width 0.35s ease;
+button:disabled {
+  cursor: not-allowed;
 }
 
-.progress-row button {
-  color: var(--blue-dark);
-  border: 0;
-  background: transparent;
-  font-size: 8px;
-  cursor: pointer;
+.model-row:disabled:not(.selected),
+.settings-button:disabled,
+.icon-button:disabled,
+.text-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.5;
 }
 
 .chat-view {
@@ -1554,12 +1611,7 @@ dd {
   color: #f1ba71;
 }
 
-.modal-backdrop {
-  position: fixed;
-  z-index: 20;
-  inset: 0;
-  display: grid;
-  place-items: center;
+.modal::backdrop {
   background: rgba(12, 19, 31, 0.66);
   backdrop-filter: blur(8px);
 }
@@ -1639,7 +1691,22 @@ dd {
   box-shadow: 0 0 0 3px rgba(49, 95, 244, 0.08);
 }
 
+.token-state,
+.removal-note {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.modal-error {
+  color: var(--red);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .privacy-note {
+  line-height: 1.6;
   display: flex;
   align-items: center;
   gap: 6px;

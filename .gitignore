@@ -19,3 +19,11 @@ results/
 .env
 .env.*
 !.env.example
+
+# Local tools and deployment metadata
+.vercel/
+.pytest_cache/
+.ruff_cache/
+
+# Intermediate macOS icon exports; final SVG, PNG, and ICNS are tracked assets.
+resources/icons/icon.iconset/

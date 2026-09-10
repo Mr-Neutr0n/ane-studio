@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ANE Studio | A local model lab for Apple Silicon</title>
+    <meta name="description" content="Convert small Hugging Face models to Core ML, verify parity, chat locally, and compare compute policies. An open-source macOS app for Apple Silicon." />
+    <meta name="theme-color" content="#f8f7f3" />
+    <meta name="color-scheme" content="light" />
+    {{CANONICAL_METADATA}}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ANE Studio" />
+    <meta property="og:title" content="ANE Studio | Small models, meet your Mac." />
+    <meta property="og:description" content="A local Core ML model lab for Apple Silicon. Convert, verify, chat, and compare compute policies. Open source. No cloud inference." />
+    <meta property="og:image" content="{{SOCIAL_IMAGE_URL}}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="ANE Studio, a local model lab for Apple Silicon. Convert models, check parity, and compare Core ML compute policies." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ANE Studio | A local model lab for Apple Silicon" />
+    <meta name="twitter:description" content="Convert small models to Core ML. Check parity. Run them on your Mac." />
+    <meta name="twitter:image" content="{{SOCIAL_IMAGE_URL}}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="shell nav-shell">
+        <a class="brand" href="/" aria-label="ANE Studio home">
+          <img src="/favicon.svg" width="36" height="36" alt="" />
+          <span>ANE Studio<span class="brand-light"> Studio</span></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="#workflow">How it works</a>
+          <a href="#models">Models</a>
+          <a href="https://github.com/Mr-Neutr0n/ane-studio" class="source-link">GitHub <span aria-hidden="true">↗</span></a>
+        </nav>
+        <a class="button button-small header-action" href="{{PRIMARY_URL}}">{{PRIMARY_SHORT}}<span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="hero-topline"><span class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Open source. On your Mac.</span><span class="hero-edition mono">The Apple Silicon edition</span></div>
+        <div class="hero-layout">
+          <div class="hero-copy">
+            <h1 id="hero-title">Small models,<br /><span>meet your Mac.</span></h1>
+            <p class="hero-description">Convert Hugging Face models to run locally through Core ML. Check conversion parity, chat, and find the compute policy that works best on your Mac.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="{{PRIMARY_URL}}">{{PRIMARY_LABEL}}<span aria-hidden="true">↓</span></a>
+              <a class="text-link" href="#workflow">Take a closer look<span aria-hidden="true">↘</span></a>
+            </div>
+            <p class="requirements">Apple Silicon · macOS 15+ · {{RELEASE_SHORT}}</p>
+          </div>
+          <aside class="local-note" aria-label="About the desktop app">
+            <div class="note-symbol" aria-hidden="true">
+              <svg viewBox="0 0 96 96" width="96" height="96" fill="none" aria-hidden="true"><title>Local model studio</title><rect x="18" y="18" width="60" height="52" rx="8" stroke="currentColor" stroke-width="1.5"/><path d="M35 83h26M48 70v13M10 39h8M10 49h8M78 39h8M78 49h8" stroke="currentColor" stroke-width="1.5"/><path d="M33 31l10 5h10l10-5v18c0 8-7 13-15 13S33 57 33 49V31z" fill="currentColor"/><circle cx="42" cy="45" r="5" fill="#f8f7f3"/><circle cx="54" cy="45" r="5" fill="#f8f7f3"/><circle cx="43" cy="45" r="2" fill="currentColor"/><circle cx="53" cy="45" r="2" fill="currentColor"/><path d="M45 53l3 4 3-4" fill="#f8f7f3"/></svg>
+            </div>
+            <p class="mono note-label">A desktop app.<br /> Not a browser runtime.</p>
+            <p>Weights, prompts, and results stay on your Mac. No cloud inference. No account to create.</p>
+            <a href="#privacy" class="subtle-link">Read the local-first details <span aria-hidden="true">↗</span></a>
+          </aside>
+        </div>
+
+        <section class="app-preview" aria-label="ANE Studio app preview">
+          <div class="preview-toolbar">
+            <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            <fieldset class="preview-switch" aria-label="Choose app screenshot">
+              <button type="button" aria-pressed="true" data-preview="benchmark">Compare compute</button>
+              <button type="button" aria-pressed="false" data-preview="chat">Chat locally</button>
+            </fieldset>
+            <span class="preview-local mono"><span class="status-dot" aria-hidden="true"></span>Local session</span>
+          </div>
+          <figure class="screenshot-figure">
+            <a href="/app-benchmark.webp" id="screenshot-link" aria-label="Open full-size app screenshot">
+              <img id="app-screenshot" src="/app-benchmark.webp" alt="ANE Studio benchmark screen comparing CPU, GPU, Neural Engine, and automatic compute policies. Observed placement is marked Not captured." width="1440" height="940" fetchpriority="high" />
+            </a>
+          </figure>
+        </section>
+        <div class="preview-caption"><p><span class="caption-index mono">01 / THE APP</span> Actual development screenshot, under the earlier ANE Studio name.</p><p>Example run, not a hardware ranking.</p></div>
+        <ul class="hero-facts" aria-label="App facts">
+          <li><span class="fact-icon" aria-hidden="true">↳</span><p><strong>Hugging Face → Core ML</strong><span>Pinned source. Local model package.</span></p></li>
+          <li><span class="fact-icon" aria-hidden="true">≋</span><p><strong>Parity before inference</strong><span>Logit similarity and top-token agreement.</span></p></li>
+          <li><span class="fact-icon" aria-hidden="true">⌘</span><p><strong>Made for Apple Silicon</strong><span>CPU, GPU, and Neural Engine policies.</span></p></li>
+        </ul>
+      </section>
+
+      <section class="workflow-section section-pad" id="workflow" aria-labelledby="workflow-title">
+        <div class="shell">
+          <div class="section-intro"><p class="eyebrow">A model is more than a download</p><h2 id="workflow-title">Bring a checkpoint.<br />Leave with evidence.</h2><p>Conversion can change a model's output. ANE Studio checks it before letting you chat or run a benchmark.</p></div>
+          <ol class="workflow-grid">
+            <li><div class="step-head"><span class="step-number mono">01</span><span class="step-tag mono">INSPECT + CONVERT</span></div><h3>Start with the source.</h3><p>Choose a supported Hugging Face checkpoint. ANE Studio checks its architecture, pins the revision, and converts a fixed-shape graph to Core ML.</p><div class="step-spec mono"><span>Hugging Face snapshot</span><span aria-hidden="true">↓</span><span>model.mlpackage</span></div></li>
+            <li><div class="step-head"><span class="step-number mono">02</span><span class="step-tag mono">VERIFY THE RESULT</span></div><h3>Make parity the gate.</h3><p>The source and Core ML logits must reach cosine similarity of at least 0.999 and choose the same top token. A failed conversion cannot run.</p><div class="parity-spec mono"><span>cosine ≥ 0.999</span><span>AND</span><span>top token matches</span></div></li>
+            <li><div class="step-head"><span class="step-number mono">03</span><span class="step-tag mono">CHAT + COMPARE</span></div><h3>Try it on your hardware.</h3><p>Chat through Core ML, then compare all four compute policies. Inspect token timings, planned placement, and the results saved on your Mac.</p><div class="policy-spec mono"><span>CPU</span><span>CPU + GPU</span><span>CPU + ANE</span><span>Automatic</span></div></li>
+          </ol>
+          <p class="section-footnote">Current runtime: fixed 64-token context, recomputed each token. No KV cache yet. <a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/docs/architecture.md">Read the architecture <span aria-hidden="true">↗</span></a></p>
+        </div>
+      </section>
+
+      <section class="models-section section-pad shell" id="models" aria-labelledby="models-title">
+        <div class="section-heading-row"><div><p class="eyebrow">Checkpoint-level proof</p><h2 id="models-title">Small enough to explore.<br />Tested before we list them.</h2></div><p>These exact checkpoints passed conversion and parity on an Apple M5 Mac with 16 GB of memory. A shared architecture alone is not a pass.</p></div>
+        <div class="model-grid">
+          <article class="model-card"><div class="model-card-top"><span class="model-maker mono">LIQUID AI / LFM2</span><span class="verified-label"><span aria-hidden="true">✓</span> Parity passed</span></div><h3>LFM2.5 <span>230M</span></h3><p class="model-description">The first model to try. A small hybrid convolution and attention checkpoint.</p><dl class="model-stats"><div><dt>Logit cosine</dt><dd>0.999936</dd></div><div><dt>Top token</dt><dd>Matched</dd></div><div><dt>FP16 package</dt><dd>459.8 MB</dd></div></dl><div class="model-card-bottom"><span class="mono">revision 40cb2ad3</span><a href="https://huggingface.co/LiquidAI/LFM2.5-230M/tree/40cb2ad3b3044d5a41eee083a6103c8b523afa45" aria-label="View LFM2.5 230M checkpoint on Hugging Face">View checkpoint <span aria-hidden="true">↗</span></a></div></article>
+          <article class="model-card"><div class="model-card-top"><span class="model-maker mono">LIQUID AI / LFM2</span><span class="verified-label"><span aria-hidden="true">✓</span> Parity passed</span></div><h3>LFM2.5 <span>350M</span></h3><p class="model-description">A larger checkpoint in the same family, tested through chat and policy comparison.</p><dl class="model-stats"><div><dt>Logit cosine</dt><dd>0.999706</dd></div><div><dt>Top token</dt><dd>Matched</dd></div><div><dt>FP16 package</dt><dd>709.4 MB</dd></div></dl><div class="model-card-bottom"><span class="mono">revision 9e6c6ccf</span><a href="https://huggingface.co/LiquidAI/LFM2.5-350M/tree/9e6c6ccf47cd318696e137d381a7ded8fe4df09f" aria-label="View LFM2.5 350M checkpoint on Hugging Face">View checkpoint <span aria-hidden="true">↗</span></a></div></article>
+        </div>
+        <p class="models-note">Historical development checks recorded on <time datetime="2026-08-29">29 August 2026</time>, not a model-quality evaluation or a regression result for a later adapter. Other checkpoints need their own evidence before joining this list. Model licenses are separate from the app's MIT license. <a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/docs/model-support.md">Support rules and known failures <span aria-hidden="true">↗</span></a></p>
+      </section>
+
+      <section class="evidence-section shell" aria-labelledby="evidence-title">
+        <div class="evidence-copy"><p class="eyebrow">Measure. Don't assume.</p><h2 id="evidence-title">A Neural Engine policy<br />isn't proof it ran there.</h2><p>Core ML can split a graph across devices or fall back. ANE Studio keeps three different claims separate, so a compute setting never masquerades as a measurement.</p><a class="text-link" href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/docs/compatibility-results.md">Read the development results <span aria-hidden="true">↗</span></a></div>
+        <ol class="evidence-list"><li><span class="mono evidence-number">01</span><div><h3>Requested</h3><p>The compute policy you allowed, such as CPU + Neural Engine.</p></div><span class="evidence-state">Recorded</span></li><li><span class="mono evidence-number">02</span><div><h3>Planned</h3><p>The operation placement Core ML's compute plan anticipates.</p></div><span class="evidence-state">Recorded</span></li><li><span class="mono evidence-number">03</span><div><h3>Observed</h3><p>Actual accelerator activity, proved by an Instruments trace aligned with inference. Profiling stays separate from timing.</p></div><span class="evidence-state pending">Not captured</span></li></ol>
+      </section>
+
+      <section class="install-section section-pad shell" id="install" aria-labelledby="install-title">
+        <div class="install-copy"><p class="eyebrow">Your next local experiment</p><h2 id="install-title">Put ANE Studio on your Mac.</h2><p>{{INSTALL_SUMMARY}}</p>{{RELEASE_PANEL}}<div class="requirements-box"><h3>Before you start</h3><ul><li>Apple Silicon Mac with macOS 15 or newer.</li><li><a href="https://bun.sh/docs/installation">Bun</a> and <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> for a source install.</li><li>About 2 GB for development dependencies, plus space for source weights and Core ML packages.</li><li>Internet for setup and model downloads. Inference runs locally afterward.</li><li>The first Core ML load can take several minutes to compile, especially with the Neural Engine policy. Token timing excludes this setup.</li></ul></div></div>
+        <div class="install-terminal"><div class="terminal-header"><span class="mono">RUN FROM SOURCE</span><button type="button" class="copy-button" id="copy-install" aria-label="Copy source install commands">Copy commands <span aria-hidden="true">⧉</span></button></div><!-- biome-ignore lint/a11y/noNoninteractiveTabindex lint/a11y/useSemanticElements: A named pre region lets keyboard users scroll and copy source commands without extra wrappers. -->
+<pre tabindex="0" role="region" aria-label="Source install commands"><code id="install-commands">git clone https://github.com/Mr-Neutr0n/ane-studio.git
+cd ane-studio
+bun install
+bun run worker:setup
+bun run dev</code></pre><div class="terminal-footer"><span class="terminal-prompt mono" aria-hidden="true">↳</span><p>Choose <strong>LFM2.5 230M</strong>, then <strong>Convert to Core ML</strong>. ANE Studio downloads, converts, and checks parity before enabling chat.</p></div><p id="copy-status" class="copy-status" role="status" aria-live="polite"></p></div>
+      </section>
+
+      <section class="faq-section section-pad shell" id="privacy" aria-labelledby="faq-title">
+        <div><p class="eyebrow">A few things worth knowing</p><h2 id="faq-title">Local, with the<br />details spelled out.</h2><p class="faq-intro">An early developer tool, with honest limits. <a href="https://github.com/Mr-Neutr0n/ane-studio/issues">Issues and contributions welcome.</a></p></div>
+        <div class="faq-list">
+          <details><summary>Does anything run in this website?<span aria-hidden="true">+</span></summary><div><p>No. This is the website for an Electron desktop app. Model conversion and inference use a Python worker and Apple's Core ML on your Mac. There is no browser inference, upload endpoint, or cloud model backend here.</p><p>This site has no analytics scripts, tracking cookies, or account system.</p></div></details>
+          <details><summary>Where do my models and prompts go?<span aria-hidden="true">+</span></summary><div><p>Model weights, converted packages, prompts, and results stay on your Mac. Hugging Face receives download requests when you fetch a model. Public models do not need a token. Optional Hugging Face credentials use Electron safeStorage and macOS Keychain.</p><p>Existing data keeps its original directory and app ID across updates.</p><code class="data-path">~/Library/Application Support/ANE Studio/</code><p><a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/docs/privacy.md">Read the app privacy details</a></p></div></details>
+          <details><summary>Can I use any Hugging Face model?<span aria-hidden="true">+</span></summary><div><p>No. ANE Studio needs an explicit architecture adapter and a passing conversion for the checkpoint you use. Unsupported architectures fail before weight downloads. Tiny random models test a converter; they do not prove that a useful checkpoint works.</p><p>The public model list above only includes checkpoints with recorded evidence. ANE Studio does not load remote custom model code.</p></div></details>
+          <details><summary>Is this a full-size chat assistant?<span aria-hidden="true">+</span></summary><div><p>No. ANE Studio is a small-model conversion and measurement tool. The current graph has a fixed 64-token context and recomputes it for each generated token. There is no stateful KV cache yet. Keep prompts and responses short.</p><p>Local smoke timings are useful for choosing a policy on your Mac, not ranking Apple hardware or model quality.</p></div></details>
+          <details><summary>Is the Mac app signed?<span aria-hidden="true">+</span></summary><div><p>Current builds are unsigned and not notarized. macOS can show a Gatekeeper warning for downloaded builds. Check the release instructions and verify checksums before opening a package. Do not turn off Gatekeeper globally.</p><p>The source path above builds locally. Full Xcode is optional for app development, but required for Instruments profiling and observed accelerator evidence.</p></div></details>
+          <details><summary>What's open source?<span aria-hidden="true">+</span></summary><div><p>ANE Studio's code is MIT licensed. Downloaded models keep their own licenses and use terms. The repository name and data path are <code>ane-studio</code> and <code>ANE Studio</code>.</p><p><a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/LICENSE">App license</a> · <a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/MODEL_LICENSES.md">Model licenses</a> · <a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a></p></div></details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><a class="brand" href="/" aria-label="ANE Studio home"><img src="/favicon.svg" alt="" width="32" height="32" /><span>ANE Studio<span class="brand-light"> Studio</span></span></a><p>A local model lab. Built by <a href="https://www.harikp.com">Hari</a>.</p><nav aria-label="Footer navigation"><a href="https://github.com/Mr-Neutr0n/ane-studio">Source <span aria-hidden="true">↗</span></a><a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/CONTRIBUTING.md">Contribute</a><a href="https://github.com/Mr-Neutr0n/ane-studio/blob/main/SECURITY.md">Security</a></nav></div></footer>
+  </body>
+</html>

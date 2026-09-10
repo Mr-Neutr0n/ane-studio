@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +11,13 @@ EventWriter = Callable[[dict[str, Any]], None]
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def redact_credentials(text: str) -> str:
+    access_token = os.environ.get("HF_TOKEN", "").strip()
+    if access_token:
+        text = text.replace(access_token, "[redacted]")
+    return re.sub(r"hf_[A-Za-z0-9]{20,}", "[redacted]", text)
 
 
 def event(

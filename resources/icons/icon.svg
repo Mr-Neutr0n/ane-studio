@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Owl on a silicon tile</title>
+  <desc>Original app icon. A light-eyed owl with a violet beak sits on a dark navy rounded tile. Short circuit contacts connect its head to the tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="248" y1="88" x2="784" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#29334f"/>
+      <stop offset="0.55" stop-color="#172137"/>
+      <stop offset="1" stop-color="#101729"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="512" y1="92" x2="512" y2="932" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7786ac" stop-opacity="0.5"/>
+      <stop offset="0.48" stop-color="#7786ac" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#070c17" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="owl" x1="512" y1="270" x2="512" y2="774" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8894bd"/>
+      <stop offset="0.48" stop-color="#56648f"/>
+      <stop offset="1" stop-color="#374564"/>
+    </linearGradient>
+    <linearGradient id="eyes" x1="512" y1="346" x2="512" y2="564" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8eaf5"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="484" y1="546" x2="541" y2="609" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c7b7ff"/>
+      <stop offset="1" stop-color="#8d79df"/>
+    </linearGradient>
+    <filter id="tile-shadow" x="24" y="28" width="976" height="988" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#080d1c" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#080d1c" flood-opacity="0.24"/>
+    </filter>
+    <filter id="owl-shadow" x="180" y="238" width="664" height="604" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#050b18" flood-opacity="0.36"/>
+    </filter>
+  </defs>
+  <g id="rounded-tile" filter="url(#tile-shadow)">
+    <rect x="88" y="88" width="848" height="848" rx="190" fill="url(#tile)"/>
+    <rect x="90" y="90" width="844" height="844" rx="188" stroke="url(#rim)" stroke-width="4"/>
+  </g>
+  <g id="chip-contacts" stroke="#8b88bc" stroke-width="20" stroke-linecap="round" opacity="0.7">
+    <path d="M224 414h62M224 494h62M224 574h62M738 414h62M738 494h62M738 574h62"/>
+  </g>
+  <g id="owl-head" filter="url(#owl-shadow)">
+    <path d="M278 278c0-9 8-13 16-9l108 59c35-12 72-18 110-18s75 6 110 18l108-59c8-4 16 0 16 9v253c0 120-85 211-225 249a34 34 0 0 1-18 0C363 742 278 651 278 531V278Z" fill="url(#owl)"/>
+    <path d="m298 296 101 56c36-13 74-20 113-20s77 7 113 20l101-56" stroke="#bec7e7" stroke-opacity="0.3" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <g id="light-eye-mask" fill="url(#eyes)">
+      <circle cx="406" cy="454" r="110"/>
+      <circle cx="618" cy="454" r="110"/>
+    </g>
+    <g id="pupils" fill="#172239">
+      <circle cx="413" cy="459" r="49"/>
+      <circle cx="611" cy="459" r="49"/>
+    </g>
+    <g id="eye-highlights" fill="#ffffff" opacity="0.96">
+      <circle cx="399" cy="441" r="13"/>
+      <circle cx="597" cy="441" r="13"/>
+    </g>
+    <path id="beak" d="M482 552c-5 0-8 6-5 10l28 43c3 5 11 5 14 0l28-43c3-4 0-10-5-10h-60Z" fill="url(#violet)"/>
+    <path id="breast" d="M438 660c22 18 47 31 74 38 27-7 52-20 74-38" stroke="#a4a8d3" stroke-opacity="0.32" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

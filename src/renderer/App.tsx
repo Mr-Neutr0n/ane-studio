@@ -27,7 +27,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BenchmarkReport,
   BootstrapData,
@@ -38,15 +38,34 @@ import type {
   PlacementSummary,
   WorkerEvent,
 } from "../shared/contracts";
+import { hasPassedParity } from "../shared/contracts";
 
 type View = "chat" | "tests" | "details";
+type Operation = "prepare" | "inspect" | "chat" | "benchmark" | "remove";
+type DisplayMessage = ChatMessage & { id: string };
+type DisplayEvent = WorkerEvent & { id: string };
+type ChatResult = {
+  text: string;
+  stopReason?: "eos" | "contextLimit" | "maxTokens";
+  contextTokens?: number;
+  sequenceLength?: number;
+  tokens?: number;
+};
 
-const policies: { id: ComputePolicy; label: string; short: string }[] = [
-  { id: "cpuOnly", label: "CPU only", short: "CPU" },
-  { id: "cpuAndGPU", label: "CPU + GPU", short: "GPU" },
-  { id: "cpuAndNeuralEngine", label: "CPU + Neural Engine", short: "ANE" },
-  { id: "all", label: "Automatic", short: "All" },
+const policies: { id: ComputePolicy; label: string }[] = [
+  { id: "cpuOnly", label: "CPU only" },
+  { id: "cpuAndGPU", label: "CPU + GPU" },
+  { id: "cpuAndNeuralEngine", label: "CPU + Neural Engine" },
+  { id: "all", label: "Automatic" },
 ];
+
+const operationLabels: Record<Operation, string> = {
+  prepare: "Inspecting the model before download...",
+  inspect: "Reading Hugging Face metadata...",
+  chat: "Generating on this Mac...",
+  benchmark: "Comparing Core ML compute policies...",
+  remove: "Removing local model files...",
+};
 
 function bytes(value?: number): string {
   if (!value) return "Not available";
@@ -66,8 +85,20 @@ function parameterLabel(value?: number): string {
   return `${Math.round(value / 1_000_000)}M parameters`;
 }
 
-function stateLabel(record?: ModelRecord): string {
+function modelCanRun(record?: ModelRecord): boolean {
+  return record?.state === "ready" && hasPassedParity(record.parity);
+}
+
+function isIncomplete(record?: ModelRecord): boolean {
+  return (
+    !!record && ["inspecting", "downloading", "converting", "validating"].includes(record.state)
+  );
+}
+
+function stateLabel(record?: ModelRecord, active = false): string {
   if (!record) return "Not converted";
+  if (!active && isIncomplete(record)) return "Interrupted";
+  if (record.state === "ready" && !modelCanRun(record)) return "Parity required";
   const labels: Record<ModelRecord["state"], string> = {
     available: "Available",
     inspecting: "Inspecting",
@@ -80,46 +111,68 @@ function stateLabel(record?: ModelRecord): string {
   return labels[record.state];
 }
 
+function precisionLabel(value?: string): string {
+  if (value === "fp16-matrices-fp32-sensitive-ops") return "FP16 matrices + FP32 sensitive ops";
+  if (value === "fp32") return "FP32 compute";
+  if (value === "fp16") return "FP16 compute";
+  return value || "Not recorded";
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
+}
+
 function App(): React.JSX.Element {
   const [bootstrap, setBootstrap] = useState<BootstrapData>();
+  const [bootAttempt, setBootAttempt] = useState(0);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const [selectedId, setSelectedId] = useState("LiquidAI/LFM2.5-230M");
   const [customId, setCustomId] = useState("");
   const [view, setView] = useState<View>("chat");
-  const [busy, setBusy] = useState(false);
-  const [events, setEvents] = useState<WorkerEvent[]>([]);
+  const [operation, setOperation] = useState<Operation>();
+  const activeOperation = useRef<Operation | undefined>(undefined);
+  const [cancelling, setCancelling] = useState(false);
+  const cancellingRef = useRef(false);
+  const [events, setEvents] = useState<DisplayEvent[]>([]);
   const [progress, setProgress] = useState<WorkerEvent>();
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content: "Convert a model, then send a message. Every prompt and output stays on this Mac.",
-    },
-  ]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [generation, setGeneration] = useState<ChatResult>();
   const [prompt, setPrompt] = useState("");
   const [policy, setPolicy] = useState<ComputePolicy>("cpuAndNeuralEngine");
   const [benchmark, setBenchmark] = useState<BenchmarkReport>();
   const [showLogs, setShowLogs] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [token, setToken] = useState("");
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenError, setTokenError] = useState<string>();
+  const [showRemove, setShowRemove] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const busy = operation !== undefined || cancelling;
 
+  const updateModel = useCallback((model: ModelRecord): void => {
+    setBootstrap((current) => {
+      if (!current) return current;
+      const models = current.models.filter((item) => item.id !== model.id);
+      return { ...current, models: [...models, model] };
+    });
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Changing bootAttempt explicitly retries a failed bootstrap.
   useEffect(() => {
-    void window.studio
-      .bootstrap()
-      .then(setBootstrap)
-      .catch((reason: Error) => setError(reason.message));
-    window.studio.onWorkerEvent((workerEvent) => {
-      setEvents((current) => [...current.slice(-299), workerEvent]);
-      if (workerEvent.kind === "progress") setProgress(workerEvent);
-      if (workerEvent.kind === "model" && workerEvent.model) {
-        const model = workerEvent.model;
-        setBootstrap((current) => {
-          if (!current) return current;
-          const models = current.models.filter((item) => item.id !== model.id);
-          return { ...current, models: [...models, model] };
-        });
+    let active = true;
+    setError(undefined);
+    const unsubscribe = window.studio.onWorkerEvent((workerEvent) => {
+      // Streamed output belongs in the chat, not in the technical log.
+      if (workerEvent.kind !== "token") {
+        setEvents((current) => [
+          ...current.slice(-299),
+          { ...workerEvent, id: crypto.randomUUID() },
+        ]);
       }
-      if (workerEvent.kind === "token" && workerEvent.token) {
+      if (workerEvent.kind === "progress" && activeOperation.current) setProgress(workerEvent);
+      if (workerEvent.kind === "model" && workerEvent.model) updateModel(workerEvent.model);
+      if (workerEvent.kind === "token" && workerEvent.token && activeOperation.current === "chat") {
         setMessages((current) => {
           const next = [...current];
           const last = next.at(-1);
@@ -130,35 +183,34 @@ function App(): React.JSX.Element {
         });
       }
     });
-  }, []);
+    void window.studio
+      .bootstrap()
+      .then((data) => {
+        if (!active) return;
+        setBootstrap(data);
+        setSelectedId((current) =>
+          [...data.curatedModels, ...data.models].some((model) => model.id === current)
+            ? current
+            : data.curatedModels[0]?.id || data.models[0]?.id || current,
+        );
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorMessage(reason));
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [bootAttempt, updateModel]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length) endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const selectedRecord = bootstrap?.models.find((model) => model.id === selectedId);
   const selectedCurated = bootstrap?.curatedModels.find((model) => model.id === selectedId);
   const modelName = selectedCurated?.label || selectedId.split("/").at(-1) || selectedId;
-  const isReady = selectedRecord?.state === "ready" && selectedRecord.parity?.status === "passed";
-
-  useEffect(() => {
-    if (!isReady) return;
-    setMessages((current) => {
-      if (
-        current.length === 1 &&
-        current[0]?.role === "assistant" &&
-        current[0].content.startsWith("Convert a model")
-      ) {
-        return [
-          {
-            role: "assistant",
-            content: `${modelName} is loaded through Core ML. What would you like to ask?`,
-          },
-        ];
-      }
-      return current;
-    });
-  }, [isReady, modelName]);
+  const isReady = modelCanRun(selectedRecord) && bootstrap?.hardware.supported === true;
 
   const modelList = useMemo(() => {
     if (!bootstrap) return [];
@@ -168,56 +220,107 @@ function App(): React.JSX.Element {
     return [...known.values()];
   }, [bootstrap]);
 
-  async function prepare(): Promise<void> {
-    setBusy(true);
+  function selectModel(id: string): void {
+    if (busy || id === selectedId) return;
+    setSelectedId(id);
+    setGeneration(undefined);
+    setMessages([]);
+    setPrompt("");
+    setBenchmark(undefined);
+    setProgress(undefined);
     setError(undefined);
+    setNotice(undefined);
+  }
+
+  function beginOperation(next: Operation): boolean {
+    if (activeOperation.current || cancellingRef.current) return false;
+    activeOperation.current = next;
+    setOperation(next);
+    setProgress(undefined);
+    setError(undefined);
+    setNotice(undefined);
+    return true;
+  }
+
+  function finishOperation(): void {
+    activeOperation.current = undefined;
+    setOperation(undefined);
+    setProgress(undefined);
+  }
+
+  function reportError(reason: unknown): void {
+    if (!cancellingRef.current) setError(errorMessage(reason));
+  }
+
+  async function prepare(): Promise<void> {
+    if (!bootstrap?.hardware.supported || !beginOperation("prepare")) return;
     try {
-      await window.studio.request("prepare", { modelId: selectedId, sequenceLength: 64 });
+      const record = await window.studio.request<ModelRecord>("prepare", {
+        modelId: selectedId,
+        sequenceLength: 64,
+      });
+      updateModel(record);
+      if (!modelCanRun(record)) {
+        setError(
+          record.error ||
+            "This model did not pass source-to-Core-ML parity. Chat and tests stay disabled.",
+        );
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      reportError(reason);
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
 
   async function sendMessage(): Promise<void> {
     const content = prompt.trim();
-    if (!content || !isReady || busy) return;
-    const requestMessages: ChatMessage[] = [
-      ...messages.filter((message, index) => !(index === 0 && message.role === "assistant")),
-      { role: "user", content },
+    if (!content || !isReady || !beginOperation("chat")) return;
+    const conversation: DisplayMessage[] = [
+      ...messages,
+      { id: crypto.randomUUID(), role: "user", content },
     ];
-    setMessages([...requestMessages, { role: "assistant", content: "" }]);
+    const reply: DisplayMessage = { id: crypto.randomUUID(), role: "assistant", content: "" };
+    const requestMessages = conversation.map(({ role, content }) => ({ role, content }));
+    setMessages([...conversation, reply]);
+    setGeneration(undefined);
     setPrompt("");
-    setBusy(true);
-    setError(undefined);
     try {
-      const result = await window.studio.request<{ text: string }>("chat", {
+      const result = await window.studio.request<ChatResult>("chat", {
         modelId: selectedId,
         messages: requestMessages,
         policy,
         maxNewTokens: 48,
         temperature: 0.2,
       });
-      setMessages((current) => {
-        const next = [...current];
-        const last = next.at(-1);
-        if (last?.role === "assistant" && !last.content)
-          next[next.length - 1] = { ...last, content: result.text };
-        return next;
-      });
+      // Decoding the full token sequence can differ from decoding one token at a time.
+      if (!result.text.trim()) {
+        setMessages(messages);
+        setPrompt(content);
+        setError(
+          "The model returned no text. The fixed context may be full. Try a shorter prompt or start a new chat.",
+        );
+      } else {
+        setMessages([...conversation, { ...reply, content: result.text }]);
+        setGeneration(result);
+        if (result.stopReason === "contextLimit") {
+          setNotice(
+            `Reply stopped at the ${result.sequenceLength || selectedRecord?.maxSequenceLength || 64}-token context limit. Start a new chat or use a shorter prompt for more output.`,
+          );
+        }
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setMessages((current) => current.slice(0, -1));
+      reportError(reason);
+      // A cancelled or failed reply must not become context for another request.
+      setMessages(messages);
+      setPrompt(content);
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
 
   async function runTests(): Promise<void> {
-    if (!isReady || busy) return;
-    setBusy(true);
-    setError(undefined);
+    if (!isReady || !beginOperation("benchmark")) return;
     try {
       const report = await window.studio.request<BenchmarkReport>("benchmark", {
         modelId: selectedId,
@@ -226,19 +329,20 @@ function App(): React.JSX.Element {
       });
       setBenchmark(report);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      reportError(reason);
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
 
   async function addCustomModel(): Promise<void> {
+    if (busy) return;
     const id = customId.trim();
-    if (!id.includes("/")) {
+    if (id.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
       setError("Enter a Hugging Face model ID such as organization/model.");
       return;
     }
-    setBusy(true);
+    if (!beginOperation("inspect")) return;
     try {
       const inspected = await window.studio.request<{
         id: string;
@@ -247,42 +351,128 @@ function App(): React.JSX.Element {
         architecture: string;
         parameterCount?: number;
         license?: string;
+        revision?: string;
       }>("inspect", { modelId: id });
       if (!inspected.supported)
         throw new Error(inspected.reason || "This architecture is not supported yet.");
+      if (!bootstrap?.models.some((model) => model.id === id)) {
+        updateModel({
+          id,
+          slug: "",
+          state: "available",
+          architecture: inspected.architecture,
+          parameterCount: inspected.parameterCount,
+          license: inspected.license,
+          revision: inspected.revision,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       setSelectedId(id);
+      setGeneration(undefined);
+      setMessages([]);
+      setPrompt("");
+      setBenchmark(undefined);
       setCustomId("");
-      setError(undefined);
+      setNotice("Metadata checked. Conversion and source-to-Core-ML parity are still required.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      reportError(reason);
     } finally {
-      setBusy(false);
+      finishOperation();
+    }
+  }
+
+  async function cancelOperation(): Promise<void> {
+    if (!activeOperation.current || cancellingRef.current) return;
+    cancellingRef.current = true;
+    setCancelling(true);
+    try {
+      await window.studio.cancel();
+      const catalog = await window.studio.request<{ models: ModelRecord[] }>("catalog");
+      setBootstrap((current) => {
+        if (!current) return current;
+        // A cancelled metadata request may not have written a manifest yet.
+        // Keep models inspected in this window until they are prepared or removed.
+        const inspected = current.models.filter(
+          (model) => !model.slug && !catalog.models.some((saved) => saved.id === model.id),
+        );
+        return { ...current, models: [...catalog.models, ...inspected] };
+      });
+      setNotice(
+        "Operation cancelled. Files already downloaded stay on this Mac. You can try again.",
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      cancellingRef.current = false;
+      setCancelling(false);
     }
   }
 
   async function remove(): Promise<void> {
-    if (!selectedRecord || busy) return;
-    setBusy(true);
-    await window.studio.request("remove", { modelId: selectedId });
-    setBootstrap((current) =>
-      current
-        ? { ...current, models: current.models.filter((model) => model.id !== selectedId) }
-        : current,
-    );
-    setMessages([{ role: "assistant", content: "The local model and its results were removed." }]);
-    setBenchmark(undefined);
-    setBusy(false);
+    if (!selectedRecord || !beginOperation("remove")) return;
+    try {
+      await window.studio.request("remove", { modelId: selectedId });
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              models: current.models.filter((model) => model.id !== selectedId),
+            }
+          : current,
+      );
+      if (!selectedCurated)
+        setSelectedId(bootstrap?.curatedModels[0]?.id || "LiquidAI/LFM2.5-230M");
+      setMessages([]);
+      setPrompt("");
+      setBenchmark(undefined);
+      setGeneration(undefined);
+      setNotice("The local model and its results were removed.");
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      setShowRemove(false);
+      finishOperation();
+    }
+  }
+
+  function closeToken(): void {
+    if (tokenBusy) return;
+    setToken("");
+    setTokenError(undefined);
+    setShowToken(false);
   }
 
   async function saveToken(): Promise<void> {
+    if (tokenBusy || !token.trim()) return;
+    setTokenBusy(true);
+    setTokenError(undefined);
     try {
-      await window.studio.saveToken(token);
+      await window.studio.saveToken(token.trim());
       setBootstrap((current) => (current ? { ...current, hasToken: true } : current));
       setToken("");
       setShowToken(false);
-      setError(undefined);
+      setNotice("Hugging Face token saved in encrypted local storage.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setTokenError(errorMessage(reason));
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function deleteToken(): Promise<void> {
+    if (tokenBusy) return;
+    setTokenBusy(true);
+    setTokenError(undefined);
+    try {
+      await window.studio.deleteToken();
+      setBootstrap((current) => (current ? { ...current, hasToken: false } : current));
+      setToken("");
+      setShowToken(false);
+      setNotice("The saved Hugging Face token was removed.");
+    } catch (reason) {
+      setTokenError(errorMessage(reason));
+    } finally {
+      setTokenBusy(false);
     }
   }
 
@@ -293,8 +483,17 @@ function App(): React.JSX.Element {
           <CircuitBoard size={28} />
         </div>
         <h1>ANE Studio</h1>
-        <p>{error || "Starting the local model worker..."}</p>
-        {!error && <LoaderCircle className="spin" size={22} />}
+        <p role={error ? "alert" : "status"}>{error || "Starting the local model worker..."}</p>
+        {error ? (
+          <button
+            className="primary-button"
+            onClick={() => setBootAttempt((current) => current + 1)}
+          >
+            Retry startup
+          </button>
+        ) : (
+          <LoaderCircle className="spin" size={22} />
+        )}
       </main>
     );
   }
@@ -320,14 +519,21 @@ function App(): React.JSX.Element {
           {modelList.map((model) => {
             const curated = "description" in model;
             const record = bootstrap.models.find((item) => item.id === model.id);
+            const recordActive = operation === "prepare" && record?.id === selectedId;
+            const recordState =
+              record?.state === "ready" && !modelCanRun(record)
+                ? "failed"
+                : isIncomplete(record) && !recordActive
+                  ? "interrupted"
+                  : record?.state || "available";
             return (
               <button
                 className={`model-row ${selectedId === model.id ? "selected" : ""}`}
                 key={model.id}
-                onClick={() => {
-                  setSelectedId(model.id);
-                  setBenchmark(undefined);
-                }}
+                aria-pressed={selectedId === model.id}
+                disabled={busy}
+                title={model.id}
+                onClick={() => selectModel(model.id)}
               >
                 <span className="model-icon">
                   <Box size={15} />
@@ -335,14 +541,14 @@ function App(): React.JSX.Element {
                 <span className="model-row-copy">
                   <strong>{curated ? model.label : model.id.split("/").at(-1)}</strong>
                   <small>
-                    {record?.state === "ready"
-                      ? `Ready · ${parameterLabel(record.parameterCount || (curated ? model.parameters : undefined))}`
+                    {record
+                      ? `${stateLabel(record, recordActive)} · ${parameterLabel(record.parameterCount || (curated ? model.parameters : undefined))}`
                       : curated
                         ? parameterLabel(model.parameters)
-                        : stateLabel(record)}
+                        : "Not converted"}
                   </small>
                 </span>
-                <span className={`status-dot ${record?.state || "available"}`} />
+                <span className={`status-dot ${recordState}`} />
               </button>
             );
           })}
@@ -354,12 +560,18 @@ function App(): React.JSX.Element {
           <div className="inline-input">
             <input
               id="model-id"
+              disabled={busy}
+              maxLength={200}
               value={customId}
               onChange={(event) => setCustomId(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && void addCustomModel()}
               placeholder="organization/model"
             />
-            <button onClick={() => void addCustomModel()} disabled={busy}>
+            <button
+              aria-label="Inspect model"
+              onClick={() => void addCustomModel()}
+              disabled={busy || !customId.trim()}
+            >
               <ArrowUp size={14} />
             </button>
           </div>
@@ -373,8 +585,9 @@ function App(): React.JSX.Element {
             </div>
             <span className="online-dot" />
           </div>
-          <button className="settings-button" onClick={() => setShowToken(true)}>
+          <button className="settings-button" disabled={busy} onClick={() => setShowToken(true)}>
             <Settings2 size={15} /> Credentials
+            <span className="sr-only">{bootstrap.hasToken ? "Token saved" : "No token saved"}</span>
             {bootstrap.hasToken && <Check size={14} className="green" />}
           </button>
         </div>
@@ -387,7 +600,7 @@ function App(): React.JSX.Element {
             <div className="model-title-row">
               <h1>{modelName}</h1>
               <span className={`header-state ${isReady ? "ready" : "idle"}`}>
-                {isReady ? "Parity passed" : stateLabel(selectedRecord)}
+                {isReady ? "Parity passed" : stateLabel(selectedRecord, operation === "prepare")}
               </span>
             </div>
             <p>
@@ -407,7 +620,9 @@ function App(): React.JSX.Element {
               <button
                 className="icon-button danger"
                 title="Remove local model"
-                onClick={() => void remove()}
+                aria-label="Remove local model"
+                disabled={busy}
+                onClick={() => setShowRemove(true)}
               >
                 <Trash2 size={16} />
               </button>
@@ -415,7 +630,7 @@ function App(): React.JSX.Element {
           </div>
         </header>
 
-        <nav className="tabs">
+        <nav className="tabs" aria-label="Model views">
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>
             <MessageSquare size={15} /> Chat
           </button>
@@ -428,13 +643,58 @@ function App(): React.JSX.Element {
         </nav>
 
         {error && (
-          <div className="error-banner">
+          <div className="error-banner" role="alert">
             <AlertTriangle size={16} />
             <span>{error}</span>
-            <button onClick={() => setError(undefined)}>
+            <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
               <X size={15} />
             </button>
           </div>
+        )}
+
+        {notice && (
+          <div className="notice-banner" role="status">
+            {notice}
+          </div>
+        )}
+        {!bootstrap.hardware.supported && (
+          <div className="error-banner" role="alert">
+            <AlertTriangle size={16} />
+            <span>
+              {bootstrap.hardware.reason ||
+                "Conversion and inference need Apple Silicon and macOS 15 or later."}
+            </span>
+          </div>
+        )}
+        {(operation || cancelling) && (
+          <section className="operation-status" aria-label="Worker operation">
+            <div className="progress-copy" role="status">
+              <LoaderCircle className="spin" size={14} />
+              <span>
+                {cancelling
+                  ? "Stopping the worker..."
+                  : progress?.message || (operation && operationLabels[operation])}
+              </span>
+            </div>
+            <progress
+              aria-label="Operation progress"
+              max={1}
+              value={
+                typeof progress?.progress === "number"
+                  ? Math.min(1, Math.max(0, progress.progress))
+                  : undefined
+              }
+            />
+            {operation !== "remove" && (
+              <button
+                className="secondary-button"
+                disabled={cancelling}
+                onClick={() => void cancelOperation()}
+              >
+                {cancelling ? "Cancelling..." : "Cancel operation"}
+              </button>
+            )}
+          </section>
         )}
 
         {!isReady && (
@@ -447,10 +707,12 @@ function App(): React.JSX.Element {
               <h2>
                 {selectedRecord?.state === "failed"
                   ? "Conversion needs attention"
-                  : "Prepare this model for Apple Silicon"}
+                  : isIncomplete(selectedRecord) && !busy
+                    ? "Preparation was interrupted"
+                    : "Prepare this model for Apple Silicon"}
               </h2>
               <p>
-                Download the pinned Hugging Face revision, convert it to FP16, then compare its
+                Download the pinned Hugging Face revision, convert it to Core ML, then compare its
                 logits with the source model before chat is enabled.
               </p>
               {selectedCurated?.caution && (
@@ -461,28 +723,42 @@ function App(): React.JSX.Element {
             </div>
             <div className="conversion-action">
               <span className={`state-badge ${selectedRecord?.state || "available"}`}>
-                {stateLabel(selectedRecord)}
+                {stateLabel(selectedRecord, operation === "prepare")}
               </span>
-              <button className="primary-button" disabled={busy} onClick={() => void prepare()}>
-                {busy ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-                {selectedRecord?.state === "failed" ? "Try again" : "Convert to Core ML"}
+              <button
+                className="primary-button"
+                disabled={busy || !bootstrap.hardware.supported}
+                onClick={() => void prepare()}
+              >
+                {operation === "prepare" ? (
+                  <LoaderCircle className="spin" size={16} />
+                ) : (
+                  <Sparkles size={16} />
+                )}
+                {selectedRecord?.state === "failed"
+                  ? "Try again"
+                  : isIncomplete(selectedRecord) && !busy
+                    ? "Convert again"
+                    : "Convert to Core ML"}
               </button>
             </div>
-            {busy && progress && (
-              <div className="progress-row">
-                <div className="progress-track">
-                  <span style={{ width: `${Math.max(3, (progress.progress || 0) * 100)}%` }} />
-                </div>
-                <span>{progress.message}</span>
-                <button onClick={() => void window.studio.cancel()}>Cancel</button>
-              </div>
-            )}
+            {selectedRecord?.error && <p className="model-error">{selectedRecord.error}</p>}
           </section>
         )}
 
         {view === "chat" && (
           <ChatView
             ready={isReady}
+            modelName={modelName}
+            sequenceLength={selectedRecord?.maxSequenceLength || 64}
+            generation={generation}
+            newChat={() => {
+              setGeneration(undefined);
+              setNotice(undefined);
+              setMessages([]);
+              setPrompt("");
+              setError(undefined);
+            }}
             messages={messages}
             prompt={prompt}
             setPrompt={setPrompt}
@@ -494,7 +770,13 @@ function App(): React.JSX.Element {
           />
         )}
         {view === "tests" && (
-          <TestsView ready={isReady} busy={busy} report={benchmark} run={() => void runTests()} />
+          <TestsView
+            ready={isReady}
+            busy={busy}
+            running={operation === "benchmark"}
+            report={benchmark}
+            run={() => void runTests()}
+          />
         )}
         {view === "details" && (
           <DetailsView
@@ -508,68 +790,161 @@ function App(): React.JSX.Element {
       </main>
 
       {showToken && (
-        <div className="modal-backdrop" onMouseDown={() => setShowToken(false)}>
-          <section className="modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-icon">
-                <KeyRound size={19} />
-              </div>
-              <div>
-                <h2>Hugging Face token</h2>
-                <p>Only needed for gated or private models.</p>
-              </div>
-              <button onClick={() => setShowToken(false)}>
-                <X size={17} />
-              </button>
+        <Modal labelId="token-title" close={closeToken} busy={tokenBusy}>
+          <div className="modal-header">
+            <div className="modal-icon">
+              <KeyRound size={19} />
             </div>
-            <label htmlFor="hf-token">Access token</label>
-            <input
-              id="hf-token"
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="hf_..."
-              autoComplete="off"
-            />
-            <p className="privacy-note">
-              <ShieldCheck size={14} /> Encrypted with macOS Keychain through Electron safeStorage.
-              Never written to logs.
+            <div>
+              <h2 id="token-title">Hugging Face token</h2>
+              <p>Only needed for gated or private models.</p>
+            </div>
+            <button aria-label="Close credentials" disabled={tokenBusy} onClick={closeToken}>
+              <X size={17} />
+            </button>
+          </div>
+          <p className="token-state">
+            {bootstrap.hasToken
+              ? "A token is saved. Its value is never sent back to this window."
+              : "No token saved."}
+          </p>
+          <label htmlFor="hf-token">Access token</label>
+          <input
+            id="hf-token"
+            type="password"
+            value={token}
+            disabled={tokenBusy}
+            maxLength={512}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="hf_..."
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p className="privacy-note">
+            <ShieldCheck size={14} /> Encrypted locally with Electron safeStorage and macOS
+            Keychain. Used only for Hugging Face access. Never written to logs.
+          </p>
+          {tokenError && (
+            <p className="modal-error" role="alert">
+              {tokenError}
             </p>
-            <div className="modal-actions">
-              {bootstrap.hasToken && (
-                <button
-                  className="text-button danger"
-                  onClick={() =>
-                    void window.studio
-                      .deleteToken()
-                      .then(() => setBootstrap({ ...bootstrap, hasToken: false }))
-                  }
-                >
-                  Remove token
-                </button>
-              )}
-              <span />
-              <button className="secondary-button" onClick={() => setShowToken(false)}>
-                Cancel
-              </button>
+          )}
+          <div className="modal-actions">
+            {bootstrap.hasToken && (
               <button
-                className="primary-button"
-                disabled={!token.trim()}
-                onClick={() => void saveToken()}
+                className="text-button danger"
+                disabled={tokenBusy}
+                onClick={() => void deleteToken()}
               >
-                Save token
+                Remove token
               </button>
+            )}
+            <span />
+            <button className="secondary-button" disabled={tokenBusy} onClick={closeToken}>
+              Cancel
+            </button>
+            <button
+              className="primary-button"
+              disabled={!token.trim() || tokenBusy}
+              onClick={() => void saveToken()}
+            >
+              {tokenBusy ? "Saving changes..." : "Save token"}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {showRemove && (
+        <Modal labelId="remove-title" busy={busy} close={() => setShowRemove(false)}>
+          <div className="modal-header">
+            <div className="modal-icon">
+              <Trash2 size={19} />
             </div>
-          </section>
-        </div>
+            <div>
+              <h2 id="remove-title">Remove local model?</h2>
+              <p>{modelName}</p>
+            </div>
+            <button
+              aria-label="Close removal dialog"
+              disabled={busy}
+              onClick={() => setShowRemove(false)}
+            >
+              <X size={17} />
+            </button>
+          </div>
+          <p className="removal-note">
+            This deletes this model's downloaded weights, Core ML package, and benchmark results
+            from this Mac. You will need to download and convert it again.
+          </p>
+          <div className="modal-actions">
+            <span />
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => setShowRemove(false)}
+            >
+              Keep model
+            </button>
+            <button className="primary-button" disabled={busy} onClick={() => void remove()}>
+              {busy ? "Removing..." : "Remove model"}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
 }
 
+function Modal(props: {
+  labelId: string;
+  close(): void;
+  busy: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      className="modal"
+      aria-labelledby={props.labelId}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          if (!props.busy) props.close();
+        }
+      }}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!props.busy) props.close();
+      }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget || props.busy) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left ||
+          event.clientX > bounds.right ||
+          event.clientY < bounds.top ||
+          event.clientY > bounds.bottom
+        )
+          props.close();
+      }}
+    >
+      {props.children}
+    </dialog>
+  );
+}
+
 function ChatView(props: {
   ready: boolean;
-  messages: ChatMessage[];
+  modelName: string;
+  sequenceLength: number;
+  newChat(): void;
+  messages: DisplayMessage[];
+  generation?: ChatResult;
   prompt: string;
   setPrompt(value: string): void;
   send(): void;
@@ -582,9 +957,13 @@ function ChatView(props: {
     <section className="chat-view">
       <div className="chat-toolbar">
         <div className="policy-select">
-          <span className="toolbar-label">Compute route</span>
+          <label className="toolbar-label" htmlFor="compute-policy">
+            Requested policy
+          </label>
           <Zap size={14} />
           <select
+            id="compute-policy"
+            disabled={props.busy}
             value={props.policy}
             onChange={(event) => props.setPolicy(event.target.value as ComputePolicy)}
           >
@@ -597,14 +976,40 @@ function ChatView(props: {
           <ChevronDown size={13} />
         </div>
         <span className={`session-state ${props.ready ? "ready" : ""}`}>
-          <i /> {props.ready ? "Core ML session ready" : "Waiting for conversion"}
+          <i /> {props.ready ? "Parity verified" : "Waiting for conversion"}
         </span>
+        <button
+          className="text-button"
+          disabled={props.busy || (!props.messages.length && !props.prompt)}
+          onClick={props.newChat}
+        >
+          New chat
+        </button>
       </div>
-      <div className="messages">
-        {props.messages.map((message, index) => (
-          <article className={`message ${message.role}`} key={`${message.role}-${index}`}>
+      <p className="context-note">
+        Fixed {props.sequenceLength}-token context, including the reply. Long conversations leave
+        less room for output. Requested policy is not proof of accelerator use.
+      </p>
+      <div className="messages" role="log" aria-label="Conversation" aria-live="polite">
+        {!props.messages.length && (
+          <article className="message assistant">
             <div className="avatar">
-              {message.role === "assistant" ? <CircuitBoard size={16} /> : "H"}
+              <CircuitBoard size={16} />
+            </div>
+            <div>
+              <span>ANE Studio</span>
+              <p>
+                {props.ready
+                  ? `${props.modelName} passed source-to-Core-ML parity. Send a message to start a local session.`
+                  : "Convert a model, then send a message. Every prompt and output stays on this Mac."}
+              </p>
+            </div>
+          </article>
+        )}
+        {props.messages.map((message) => (
+          <article className={`message ${message.role}`} key={message.id}>
+            <div className="avatar">
+              {message.role === "assistant" ? <CircuitBoard size={16} /> : "You"}
             </div>
             <div>
               <span>{message.role === "assistant" ? "Model" : "You"}</span>
@@ -612,10 +1017,24 @@ function ChatView(props: {
             </div>
           </article>
         ))}
+        {props.generation?.stopReason && (
+          <p className="generation-note" role="status">
+            {props.generation.tokens ?? "Unknown"} output tokens.{" "}
+            {props.generation.stopReason === "eos"
+              ? "Stopped at the end-of-sequence token."
+              : props.generation.stopReason === "contextLimit"
+                ? "Stopped at the fixed context limit."
+                : "Stopped at the requested output limit."}
+            {props.generation.contextTokens !== undefined &&
+              ` Final context used ${props.generation.contextTokens}/${props.generation.sequenceLength || props.sequenceLength} tokens.`}
+          </p>
+        )}
         <div ref={props.endRef} />
       </div>
       <div className={`composer ${!props.ready ? "disabled" : ""}`}>
         <textarea
+          aria-label="Message the local model"
+          maxLength={32768}
           value={props.prompt}
           onChange={(event) => props.setPrompt(event.target.value)}
           onKeyDown={(event) => {
@@ -630,7 +1049,11 @@ function ChatView(props: {
           }
           rows={2}
         />
-        <button disabled={!props.ready || !props.prompt.trim() || props.busy} onClick={props.send}>
+        <button
+          aria-label="Send message"
+          disabled={!props.ready || !props.prompt.trim() || props.busy}
+          onClick={props.send}
+        >
           <ArrowUp size={17} />
         </button>
         <small>
@@ -647,6 +1070,7 @@ function ChatView(props: {
 function TestsView(props: {
   ready: boolean;
   busy: boolean;
+  running: boolean;
   report?: BenchmarkReport;
   run(): void;
 }): React.JSX.Element {
@@ -673,7 +1097,7 @@ function TestsView(props: {
           disabled={!props.ready || props.busy}
           onClick={props.run}
         >
-          {props.busy ? <LoaderCircle className="spin" size={16} /> : <Activity size={16} />} Run
+          {props.running ? <LoaderCircle className="spin" size={16} /> : <Activity size={16} />} Run
           all tests
         </button>
       </div>
@@ -805,7 +1229,7 @@ function Evidence({ placement }: { placement?: PlacementSummary }): React.JSX.El
 function DetailsView(props: {
   record?: ModelRecord;
   curated?: CuratedModel;
-  events: WorkerEvent[];
+  events: DisplayEvent[];
   showLogs: boolean;
   setShowLogs(value: boolean): void;
 }): React.JSX.Element {
@@ -843,8 +1267,12 @@ function DetailsView(props: {
               <span className="section-kicker">Correctness gate</span>
               <h3>Source versus Core ML</h3>
             </div>
-            <span className={`state-badge ${parity?.status || "pending"}`}>
-              {parity?.status || "Not run"}
+            <span
+              className={`state-badge ${hasPassedParity(parity) ? "passed" : parity?.status === "passed" ? "failed" : parity?.status || "pending"}`}
+            >
+              {parity?.status === "passed" && !hasPassedParity(parity)
+                ? "Invalid evidence"
+                : parity?.status || "Not run"}
             </span>
           </div>
           <dl>
@@ -891,7 +1319,9 @@ function DetailsView(props: {
             </div>
             <div>
               <dt>Precision</dt>
-              <dd>FP16 compute</dd>
+              <dd title={precisionLabel(parity?.computePrecision)}>
+                {precisionLabel(parity?.computePrecision)}
+              </dd>
             </div>
             <div>
               <dt>Sequence length</dt>
@@ -901,7 +1331,7 @@ function DetailsView(props: {
         </section>
       </div>
       <section className="logs-panel">
-        <button onClick={() => props.setShowLogs(!props.showLogs)}>
+        <button aria-expanded={props.showLogs} onClick={() => props.setShowLogs(!props.showLogs)}>
           <TerminalSquare size={15} />
           <span>Technical log</span>
           <small>{props.events.length} events</small>
@@ -910,8 +1340,8 @@ function DetailsView(props: {
         {props.showLogs && (
           <div className="logs">
             {props.events.length ? (
-              props.events.map((item, index) => (
-                <p key={`${item.at}-${index}`}>
+              props.events.map((item) => (
+                <p key={item.id}>
                   <time>{new Date(item.at).toLocaleTimeString()}</time>
                   <span className={item.level}>{item.stage || item.kind}</span>
                   {item.message || item.token || JSON.stringify(item.model)}

@@ -1,0 +1,16 @@
+{
+  "name": "ANE Studio",
+  "short_name": "ANE Studio",
+  "description": "A local Core ML model lab for Apple Silicon.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "theme_color": "#f8f7f3",
+  "background_color": "#f8f7f3",
+  "display": "browser"
+}

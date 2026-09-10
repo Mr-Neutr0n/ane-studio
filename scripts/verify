@@ -13,9 +13,12 @@ bun run check
 echo "==> Renderer tests"
 bun run test
 
+echo "==> Release tooling tests"
+bun test scripts/release-tooling.test.ts
+
 echo "==> Worker checks"
-uv run --project worker --extra coreml --extra test --locked ruff format --check worker
-uv run --project worker --extra coreml --extra test --locked ruff check worker
+uv run --project worker --extra coreml --extra test --locked ruff format --check worker scripts/bundle-runtime.py
+uv run --project worker --extra coreml --extra test --locked ruff check worker scripts/bundle-runtime.py
 uv run --project worker --extra coreml --extra test --locked pytest
 
 echo "==> Production build"
@@ -24,11 +27,11 @@ bun run build
 echo "==> Electron startup"
 bunx playwright test
 
+echo "==> Public website"
+(cd website && bun run verify)
+
 echo "==> Repository checks"
+bun scripts/check-repository.ts
 git diff --check
-if rg -n --hidden --glob '!bun.lock' --glob '!worker/uv.lock' --glob '!licenses/**' 'hf_[A-Za-z0-9]{20,}' .; then
-  echo "error: possible Hugging Face token in repository" >&2
-  exit 1
-fi
 
 echo "verify passed"

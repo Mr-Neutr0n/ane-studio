@@ -6,83 +6,110 @@ A checkpoint can enter ANE Studio when all of these hold:
 
 - It is a causal text-generation model on Hugging Face.
 - Its exact Transformers architecture has a registered adapter.
-- The tokenizer and model load without remote custom code.
-- A fixed-shape FP16 trace converts to a Core ML ML Program.
-- Source and Core ML logits reach cosine similarity `0.999` or higher.
-- Both runtimes choose the same top token for the parity prompt.
+- Tokenizer and model load without remote custom code.
+- The fixed-shape trace converts to a Core ML ML Program.
+- Every parity fixture reaches cosine similarity `0.999` or higher and chooses the same top token.
+- Both source and Core ML logits are finite and nonzero.
 
-The app rejects unsupported architectures before downloading weights. A model name, parameter count, or shared base family does not bypass the adapter gate.
+An architecture name does not bypass parity. The app pins model metadata and downloads to an exact Hugging Face revision. A failed artifact cannot run chat or benchmarks.
+
+Converter version 3 checks four prompts against the original, unpatched Transformers forward:
+
+| Fixture | Text | Selected position in the two added checkpoints |
+| --- | --- | ---: |
+| `completion` | `The capital of France is` | 4 |
+| `short` | `The opposite of hot is` | 4 |
+| `first-token` | `Hello` | 0 |
+| `context-boundary` | `A short sentence about the sky and the sea. ` repeated and truncated to the graph length | 63 |
+
+Every check must pass. The manifest stores individual checks. Its aggregate cosine is the minimum, maximum absolute error is the maximum, and `topTokenMatches` is true only when every check agrees. The top-level token IDs refer to `completion`.
 
 ## Registered adapters
 
 ### LFM2
 
-`Lfm2ForCausalLM` combines short convolutions and grouped-query attention. Transformers currently exposes two trace gaps that the adapter rewrites without changing model math:
+`Lfm2ForCausalLM` combines short convolutions and grouped-query attention. The trace adapter replaces the dynamic causal mask with a fixed additive mask and uses the declared convolution kernel size as a trace constant. Patches restore the original functions even when tracing fails.
 
-- The dynamic causal-mask helper becomes a fixed upper-triangular additive mask.
-- The short-convolution fallback uses the model's declared kernel size as a trace constant.
+LFM2 keeps FP16 source loading and FP16 conversion. Its parity reference is the unpatched FP16 Transformers model. Historical validated checkpoints:
 
-Tested checkpoints:
+- `LiquidAI/LFM2.5-230M` at `40cb2ad3b3044d5a41eee083a6103c8b523afa45`.
+- `LiquidAI/LFM2.5-350M` at `9e6c6ccf47cd318696e137d381a7ded8fe4df09f`.
 
-- `LiquidAI/LFM2.5-230M`: passed at revision `40cb2ad3b3044d5a41eee083a6103c8b523afa45`.
-- `LiquidAI/LFM2.5-350M`: passed at revision `9e6c6ccf47cd318696e137d381a7ded8fe4df09f`.
+These weights use the LFM Open License, not Apache 2.0 or MIT.
 
-### Qwen2
+### Qwen2 and Llama
 
-`Qwen2ForCausalLM` uses eager grouped-query attention and a fixed causal mask during tracing.
+`Qwen2ForCausalLM` and `LlamaForCausalLM` use eager grouped-query attention with the same scoped fixed causal-mask rewrite. Both load the source in FP32.
 
-The adapter passed conversion and parity with `yujiepan/qwen2-tiny-random`. Architecture support does not imply that a larger checkpoint passes. `Qwen/Qwen2.5-0.5B-Instruct` converted structurally but failed parity with cosine `0.903762` and a different top token.
+Qwen2 converts in full FP32. Mixed FP16 matrix compute passed three prompts but failed the one-token `Hello` fixture at position zero, with cosine `0.977045`. Restricting FP16 to linear projections still failed at `0.982327`. Full FP32 passed all four without changing the threshold or model math.
 
-`WeiboAI/VibeThinker-3B` uses the same architecture, but its full checkpoint has not been converted on the 16 GB development Mac because source and FP16 artifact storage require more free disk and memory than were available.
+Llama uses mixed precision. Core ML's FP16 pass selects only `linear` and `matmul` operations. Embeddings, RMS normalization, residual operations and softmax retain FP32. The fixed-position RoPE angles fold to FP32 sine/cosine constants before that pass. This is not a claim about future dynamic-position RoPE graphs.
 
-## Known failed checkpoints
+The adapter selects the current hidden-state row before projecting to the vocabulary. It does not compute a full sequence of vocabulary vectors for each generation step.
 
-Failures are pinned to exact Hugging Face revisions in `catalog.py` so the app rejects them before another large download:
+The two useful Apache 2.0 checkpoints are:
 
-- `HuggingFaceTB/SmolLM2-135M-Instruct` at `12fd25f77366fa6b3b4b768ec3050bf629380bac`: the converted Llama graph returned zero logits. Llama remains unregistered.
-- `Qwen/Qwen2.5-0.5B-Instruct` at `7ae557604adf67be50417f59c2c2f167def9a775`: logit and top-token parity failed.
+- `Qwen/Qwen2.5-0.5B-Instruct` at `7ae557604adf67be50417f59c2c2f167def9a775`.
+- `HuggingFaceTB/SmolLM2-135M-Instruct` at `12fd25f77366fa6b3b4b768ec3050bf629380bac`.
 
-A new model revision or adapter fix can remove a block only after repeating conversion and parity on the Mac.
+See [compatibility results](compatibility-results.md) for exact parity, chat, policy results and compilation limits. These small models can produce poor answers even when conversion parity passes. ANE Studio does not reproduce their advertised long-context limits.
+
+`yujiepan/qwen2-tiny-random` is a converter regression fixture, not a useful chat model. `WeiboAI/VibeThinker-3B` has a registered architecture but has not passed full-checkpoint conversion. Its FP32 source alone needs about 12 GB, before tracing and conversion copies. Do not attempt it on a busy 16 GB Mac.
+
+## Numerical failure history
+
+The same pinned Qwen2.5 and SmolLM2 revisions failed the earlier blanket-FP16 conversion. Qwen2.5 had cosine `0.903762` and a different top token. SmolLM2 returned zero logits.
+
+Full-FP32 and selective-matrix-FP16 probes isolated the failure to precision lowering. A separate synthetic RMS normalization check reproduced finite zero outputs when an FP16 square overflowed. That explains a possible mechanism, not the exact failing operator in the original full checkpoint. No epsilon, weight, cosine threshold, or top-token requirement was changed.
+
+The revision blocks were removed only after the repaired conversion passed all four real unpatched-source fixtures on the Mac. New revisions still pass through conversion and the same gate.
+
+## Runtime and resource limits
+
+- The default graph has a total context of 64 tokens, including the chat template and generated tokens. It is not a KV-cache decoder.
+- Input token IDs pass directly into Core ML. Generation never decodes and re-encodes its history.
+- A prompt that fills the graph returns an explicit error. The app does not silently discard the chat template.
+- Generation reports `eos`, `contextLimit`, or `maxTokens`, plus token and context counts.
+- The fixed mask is equivalent only for a contiguous, right-padded valid prefix. It does not support left padding or interior mask holes.
+- Mixed precision uses more disk than blanket FP16. Current packages are about 383 MB for mixed-precision SmolLM2 and 1.98 GB for FP32 Qwen2.5.
+- Start the added checkpoints with CPU or GPU. First CPU+ANE compilation can take minutes and may fall back to CPU.
+- Requested compute policy and planned placement do not prove observed accelerator activity. No Instruments trace was captured for these tests.
 
 ## Networked smoke commands
 
-These commands download models and write generated artifacts outside Git.
-
-Test the small LFM2 checkpoint end to end:
+These commands use the repository's native worker environment. Generated artifacts stay outside Git. The legacy `ANE_STUDIO_HOME` name is intentional and preserves existing data paths.
 
 ```bash
-printf '%s\n' \
-  '{"id":"lfm","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-230M","sequenceLength":64}}' \
+export ANE_STUDIO_HOME="$(mktemp -d /tmp/ane-model-smoke.XXXXXX)"
+printf '%s\n' '{"id":"smol","command":"prepare","payload":{"modelId":"HuggingFaceTB/SmolLM2-135M-Instruct","sequenceLength":64}}' \
   | uv run --project worker --extra coreml --locked ane-studio-worker
 ```
 
-Test the second validated LFM2 checkpoint:
+Prepare Qwen2.5 in the same isolated home, after the first command exits:
 
 ```bash
-printf '%s\n' \
-  '{"id":"lfm350","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-350M","sequenceLength":64}}' \
+printf '%s\n' '{"id":"qwen","command":"prepare","payload":{"modelId":"Qwen/Qwen2.5-0.5B-Instruct","sequenceLength":64}}' \
   | uv run --project worker --extra coreml --locked ane-studio-worker
 ```
 
-Test the Qwen2 adapter with a small fixture:
+Chat and compare policies only after preparation returns `state: ready`:
 
 ```bash
-export ANE_STUDIO_HOME="$(mktemp -d /tmp/ane-studio-qwen.XXXXXX)"
-printf '%s\n' \
-  '{"id":"qwen","command":"prepare","payload":{"modelId":"yujiepan/qwen2-tiny-random","sequenceLength":16}}' \
+printf '%s\n' '{"id":"chat","command":"chat","payload":{"modelId":"HuggingFaceTB/SmolLM2-135M-Instruct","policy":"cpuOnly","messages":[{"role":"user","content":"Say hello in one short sentence."}],"maxNewTokens":16,"temperature":0}}' \
+  | uv run --project worker --extra coreml --locked ane-studio-worker
+printf '%s\n' '{"id":"bench","command":"benchmark","payload":{"modelId":"HuggingFaceTB/SmolLM2-135M-Instruct","prompt":"Count from one to ten.","policies":["cpuOnly","cpuAndGPU","cpuAndNeuralEngine","all"]}}' \
   | uv run --project worker --extra coreml --locked ane-studio-worker
 ```
 
-A successful final response has `state: ready`, `parity.status: passed`, and an artifact digest.
+Regression preparations, one at a time:
 
-## Adding an adapter
+```bash
+printf '%s\n' '{"id":"lfm","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-230M","sequenceLength":64}}' \
+  | uv run --project worker --extra coreml --locked ane-studio-worker
+printf '%s\n' '{"id":"lfm350","command":"prepare","payload":{"modelId":"LiquidAI/LFM2.5-350M","sequenceLength":64}}' \
+  | uv run --project worker --extra coreml --locked ane-studio-worker
+printf '%s\n' '{"id":"tiny","command":"prepare","payload":{"modelId":"yujiepan/qwen2-tiny-random","sequenceLength":64}}' \
+  | uv run --project worker --extra coreml --locked ane-studio-worker
+```
 
-1. Add the exact Transformers architecture to `worker/src/ane_studio_worker/catalog.py`.
-2. Add only the trace rewrites needed for equivalent model math.
-3. Convert a tiny public checkpoint for the architecture.
-4. Verify logit cosine similarity and top-token agreement.
-5. Test a useful checkpoint at its intended size.
-6. Record model-specific licenses and resource limits.
-7. Run chat and all four compute policies on Apple Silicon.
-
-Keep architecture support separate from checkpoint validation. Passing a tiny fixture proves the conversion path, not the quality or resource behavior of every checkpoint in that family.
+A successful response contains passing parity and an artifact digest. Keep model-family tests separate from model-quality claims. Run chat and all four policy attempts on Apple Silicon before reporting a checkpoint as tested. Record timeouts or fallback instead of inferring ANE execution from an allowed policy.

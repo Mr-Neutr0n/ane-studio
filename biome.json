@@ -11,7 +11,11 @@
       "!!results",
       "!!test-results",
       "!!playwright-report",
-      "!!coverage"
+      "!!coverage",
+      "!!website/node_modules",
+      "!!website/dist",
+      "!!website/test-results",
+      "!!website/playwright-report"
     ]
   },
   "formatter": {

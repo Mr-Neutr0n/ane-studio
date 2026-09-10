@@ -1,6 +1,6 @@
 # Privacy
 
-ANE Studio runs model preparation, chat, and benchmarks on the user's Mac.
+The desktop app runs model preparation, chat, and benchmarks on the user's Mac.
 
 ## Network access
 
@@ -10,11 +10,13 @@ The worker connects to Hugging Face only to inspect and download a requested mod
 
 Public models need no token. When a user saves a Hugging Face token, Electron `safeStorage` encrypts it through macOS Keychain. The encrypted value is stored with mode `600`. The main process passes the decrypted token only in the worker's environment.
 
-The renderer cannot read the token. Logs and result files must never contain it.
+The renderer accepts a token when the user enters it but cannot retrieve the saved token. Closing the token dialog clears its input. The main process isolates the worker from other tools' Hugging Face credentials and disables implicit token lookup. Logs and error messages redact tokens.
 
 ## Local data
 
-Model weights, converted packages, prompts held by the current UI session, and benchmark results remain under the ANE Studio application data directory. Chat history is not persisted in this version. Removing a model deletes its local source, conversion, manifest, and results.
+Model weights, converted packages, manifests, and benchmark results stay under `~/Library/Application Support/ANE Studio`, or the explicit `ANE_STUDIO_HOME` test override. Chat prompts and history stay in memory and are not persisted in this version.
+
+Removing a model deletes its local source, conversion, manifest, and results after confirmation. Downloaded metadata can remain in the app's Hugging Face cache. Removing the whole application data directory also removes that cache and saved credentials.
 
 ## Reports
 

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>ANE Studio</title>
+  <rect width="64" height="64" rx="18" fill="#5145b8"/>
+  <path d="M15 18l11 5h12l11-5v23c0 9-8 14-17 14S15 50 15 41V18z" fill="#f8f7f3"/>
+  <circle cx="25" cy="35" r="8" fill="#5145b8"/>
+  <circle cx="39" cy="35" r="8" fill="#5145b8"/>
+  <circle cx="26" cy="34" r="3" fill="#f8f7f3"/>
+  <circle cx="38" cy="34" r="3" fill="#f8f7f3"/>
+  <path d="M28 44l4 5 4-5" fill="#d6a459"/>
+</svg>

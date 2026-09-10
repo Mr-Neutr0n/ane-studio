@@ -1,43 +1,83 @@
 # ANE Studio
 
-A local macOS app for bringing small Hugging Face language models to Core ML, checking whether conversion preserved their behavior, and measuring which Apple Silicon compute policy is fastest.
+A local macOS app that converts small Hugging Face language models to Core ML, checks source-to-Core-ML parity, and compares Apple Silicon compute policies. Chat runs on your Mac, not a hosted inference API.
 
 ![ANE Studio policy comparison](docs/assets/benchmark.png)
 
-ANE Studio does not call a selected CPU+ANE policy "ANE-only." Core ML can partition a graph or fall back. The app keeps requested policy, planned placement, and observed activity as separate claims.
+## Install
 
-## What works
+Use an Apple Silicon Mac with macOS 15 or newer. We test on a Mac with 16 GB unified memory. Leave at least 8 GB free for the app, one small model, and conversion scratch files. Larger checkpoints need more space and memory.
 
-- Native desktop experience through Electron on Apple Silicon
-- Hugging Face model inspection and pinned downloads
-- FP16 Core ML conversion for LFM2 and Qwen2 causal language models
-- Source-versus-Core-ML logit parity before execution
-- Local streaming chat through Core ML
-- CPU, CPU+GPU, CPU+ANE, and automatic policy comparisons
-- Raw token latency samples and `MLComputePlan` operation counts
-- Encrypted Hugging Face credentials through Electron `safeStorage` and macOS Keychain
-- No network traffic after model download
+Public builds appear on the [GitHub releases page](https://github.com/Mr-Neutr0n/ane-studio/releases). If no release is listed, use the source setup below.
 
-The first curated checkpoints are:
+A release ZIP includes Python and the locked worker dependencies. You do not need Bun, uv, Homebrew, or a system Python to run it. It does not include model weights. The first model download needs an internet connection.
 
-| Model | Architecture | Status |
-| --- | --- | --- |
-| [`LiquidAI/LFM2.5-230M`](https://huggingface.co/LiquidAI/LFM2.5-230M) | LFM2 hybrid convolution and attention | Tested end to end on an M5 Mac |
-| [`LiquidAI/LFM2.5-350M`](https://huggingface.co/LiquidAI/LFM2.5-350M) | LFM2 hybrid convolution and attention | Tested end to end on an M5 Mac |
-| [`WeiboAI/VibeThinker-3B`](https://huggingface.co/WeiboAI/VibeThinker-3B) | Qwen2 | Adapter tested with a tiny Qwen2 fixture; full 3B conversion needs more free disk and memory |
+### Unsigned preview builds
 
-Other checkpoints using those exact Transformers architectures can be inspected from the model ID field. Unsupported architectures fail before downloading weights.
+These builds have no Apple Developer ID signature and are not notarized. Some bundled native files have local ad-hoc signatures so macOS can execute them. Those signatures do not identify a trusted publisher.
 
-## Measured M5 smoke result
+1. Download the versioned Apple Silicon ZIP and `SHA256SUMS` from the same release.
+2. In that download directory, run `shasum -a 256 -c SHA256SUMS` in Terminal.
+3. Extract the ZIP and move `ANE Studio.app` to Applications.
+4. Open it. If macOS blocks it, review the publisher and checksum before using System Settings > Privacy & Security > Open Anyway. Apple documents this [per-app exception](https://support.apple.com/en-us/102445).
 
-`LiquidAI/LFM2.5-230M` was downloaded at revision `40cb2ad3b3044d5a41eee083a6103c8b523afa45`, converted at a fixed 64-token shape, and run on an Apple M5 MacBook Air with 16 GB unified memory.
+Do not disable Gatekeeper globally. If your Mac's policy does not allow unsigned apps, use the source setup or wait for a Developer ID signed release. We have not verified a downloaded, quarantined build on a second clean Mac.
 
-- Core ML artifact: 459.8 MB
-- Logit cosine similarity: `0.999936`
-- Top-token agreement: passed
-- Chat output for "Say hello in one short sentence": `Hello! How can I assist you today?`
-- Planned CPU+ANE placement: 641 of 658 non-constant operations on ANE
-- Observed placement: not captured because full Xcode and an Instruments trace were unavailable
+### Run from source
+
+Install [Bun](https://bun.sh/) and [uv](https://docs.astral.sh/uv/) through their official instructions, then run:
+
+```bash
+git clone https://github.com/Mr-Neutr0n/ane-studio.git
+cd ane-studio
+bun install --frozen-lockfile
+bun run worker:setup
+bun run dev
+```
+
+Release builds use Bun `1.3.13`, uv `0.11.17`, and managed CPython `3.12.13`. You do not need Xcode for source setup. Release packaging uses Apple's command-line tools. Full Xcode is needed only for Instruments profiling and observed-placement evidence.
+
+If source startup cannot find uv, start from this Terminal or set `ANE_STUDIO_UV` to its absolute executable path. Packaged builds never run uv.
+
+## First model
+
+Select `LFM2.5 230M`, choose **Convert to Core ML**, and wait for download, conversion, and parity. Public models do not need a Hugging Face token. Gated or private models still require access from their publisher.
+
+The app will not enable chat or benchmarks unless logit cosine similarity is at least `0.999` and the source and Core ML top token match. A compatible architecture alone does not prove that a checkpoint works.
+
+See [model support](docs/model-support.md) for exact checkpoint revisions, adapters, admission rules, failures, and networked smoke commands. [Compatibility results](docs/compatibility-results.md) record the development measurements. Model licenses are separate from the app's MIT license.
+
+## What the app does
+
+- Inspects Hugging Face metadata before downloading model weights.
+- Pins downloaded snapshots to exact revisions.
+- Converts fixed-shape models and checks parity before use.
+- Streams local chat through Core ML.
+- Compares CPU, CPU+GPU, CPU+ANE, and automatic compute policies.
+- Retains raw token latency samples and planned operation counts.
+- Stores Hugging Face credentials with Electron `safeStorage` and macOS Keychain.
+
+Chat and benchmarks run locally after preparation. Metadata lookup and model downloads contact Hugging Face. The app disables Hugging Face telemetry and does not send prompts to a hosted model.
+
+## Placement is evidence, not a switch
+
+A CPU+ANE policy is not "ANE-only." Core ML can partition the graph or fall back. The app separates:
+
+- Requested placement, the devices a compute policy permits.
+- Planned placement, the device assignments in `MLComputePlan`.
+- Observed placement, accelerator activity in an Instruments trace aligned with inference.
+
+The app automates requested and planned evidence. Observed activity is not captured automatically. Keep profiling separate from timing because Instruments changes latency.
+
+### Measured M5 smoke result
+
+`LiquidAI/LFM2.5-230M` at revision `40cb2ad3b3044d5a41eee083a6103c8b523afa45` passed conversion at a fixed 64-token shape on an Apple M5 MacBook Air with 16 GB unified memory.
+
+- Core ML artifact, 459.8 MB.
+- Logit cosine similarity, `0.999936`, with matching top token.
+- Chat for "Say hello in one short sentence" returned `Hello! How can I assist you today?`
+- Planned CPU+ANE placement, 641 of 658 non-constant operations on ANE.
+- Observed placement, not captured.
 
 One interactive policy run produced:
 
@@ -48,90 +88,66 @@ One interactive policy run produced:
 | CPU + ANE | 12.7 ms | 78.9 tok/s | 641 ANE, 17 CPU operations |
 | Automatic | 17.4 ms | 57.5 tok/s | 79 ANE, 574 GPU, 5 CPU operations |
 
-These are development smoke numbers, not publication-grade results. The current runtime recomputes a fixed context without a KV cache, and the policy test runs sequentially in one worker process. The result is useful for local backend selection, not a universal hardware ranking.
+These are development smoke numbers, not a universal hardware ranking. The runtime recomputes the fixed context each token without a stateful KV cache. Policy tests run sequentially in one worker process.
 
-## Additional small-model tests
+## Data and privacy
 
-The same M5 path was exercised against four more public checkpoints:
-
-| Model | Outcome | Evidence |
-| --- | --- | --- |
-| `LiquidAI/LFM2.5-350M` | Passed | Cosine `0.999706`, top token matched, 709.4 MB artifact, chat returned `Hello!` |
-| `yujiepan/qwen2-tiny-random` | Passed as a converter fixture | Cosine `0.999995`, top token matched |
-| `Qwen/Qwen2.5-0.5B-Instruct` | Failed and blocked | Cosine `0.903762`; Core ML selected a different top token |
-| `HuggingFaceTB/SmolLM2-135M-Instruct` | Failed and unsupported | The converted Llama graph returned zero logits |
-
-`google/gemma-3-270m-it` could not be tested without accepting Google's gated model terms. Failed checkpoints remain unavailable for chat because the parity gate held.
-
-The LFM2.5-350M quick comparison measured 81.5 tok/s on CPU+GPU and 47.9 tok/s on CPU+ANE. Its compute plan preferred ANE for 699 of 716 non-constant operations under CPU+ANE. Observed placement was not captured.
-
-## Requirements
-
-- Apple Silicon Mac
-- macOS 15 or newer
-- [Bun](https://bun.sh/)
-- [uv](https://docs.astral.sh/uv/)
-- About 2 GB free for development dependencies
-- Additional disk space for source weights and FP16 Core ML packages
-
-Full Xcode is optional for app development. It is required for Instruments profiling and observed-placement evidence.
-
-## Run from source
-
-```bash
-git clone https://github.com/Mr-Neutr0n/ane-studio.git
-cd ane-studio
-bun install
-bun run worker:setup
-bun run dev
-```
-
-Select `LFM2.5 230M`, click **Convert to Core ML**, and wait for download, conversion, and parity. Public models do not require a Hugging Face token.
-
-Local data lives under:
+Local data remains under:
 
 ```text
 ~/Library/Application Support/ANE Studio/
 ```
 
-Removing a model in the app deletes its downloaded snapshot, Core ML package, manifest, and benchmark reports.
+Removing a model in the app deletes its snapshot, converted package, manifest, and benchmark reports. This directory and app ID `dev.harikrishna.anestudio` stay stable across updates. `ANE_STUDIO_HOME` can select an isolated directory for tests.
 
-## Build the unsigned app
+The sandboxed renderer has no Node.js access. It uses a typed preload bridge. The main process validates requests and supervises the local Python worker. The worker loads models without Hugging Face remote custom code.
 
-```bash
-bun run package
-open "dist/mac-arm64/ANE Studio.app"
-```
-
-Local builds are free. Public notarization requires Apple's paid developer program. This repository does not require it.
+Read [architecture](docs/architecture.md), [privacy](docs/privacy.md), and [security](SECURITY.md) for the process and storage boundaries.
 
 ## Verify
 
+The full check includes the public website and browser tests:
+
 ```bash
+bun install --frozen-lockfile
+bun install --cwd website --frozen-lockfile
+cd website
+bunx playwright install chromium webkit
+cd ..
 bun run verify
 ```
 
-That command runs TypeScript checks, renderer tests, Python worker tests, the production build, and the Electron startup test. Networked model conversion smoke commands are documented in [`docs/model-support.md`](docs/model-support.md).
+It runs TypeScript and formatting checks, renderer and main-process tests, Python worker tests, production builds, Electron startup tests, website checks, and a repository credential scan. It does not download model weights. Model conversion changes also need the networked commands in [model support](docs/model-support.md).
 
-## Architecture and privacy
+## Build a self-contained app
 
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/model-support.md`](docs/model-support.md)
-- [`docs/compatibility-results.md`](docs/compatibility-results.md)
-- [`docs/privacy.md`](docs/privacy.md)
-- [`MODEL_LICENSES.md`](MODEL_LICENSES.md)
+On Apple Silicon with Apple's command-line tools installed:
 
-The Electron renderer has no Node.js access. It talks through a narrow preload API to the main process. The main process supervises a local Python worker that owns Hugging Face, PyTorch, Transformers, and Core ML Tools.
+```bash
+bun run release:local
+```
 
-## Limitations
+This builds a separate locked environment in ignored `artifacts/`, bundles CPython and the worker dependencies, collects license notices, relocates native library references, and checks native dependencies. It then builds the app, runs a clean-data launch with uv absent from PATH, and writes:
 
-- LFM2 and Qwen2 are the only registered architectures.
-- Conversion uses FP16 and a fixed 64-token context by default.
-- Generation currently recomputes the fixed context each token instead of using a stateful KV cache.
-- The app reports planned placement automatically. Observed placement still requires Instruments.
-- Unsigned local builds trigger normal macOS Gatekeeper behavior when copied to another machine.
-- Model licenses remain separate from this repository's MIT code license.
+```text
+dist/mac-arm64/ANE Studio.app
+dist/ANE-Studio-0.1.0-arm64.zip
+dist/SHA256SUMS
+```
 
-## License
+`bun run package` builds just the app. `bun run package:test` repeats the packaged runtime and Electron startup checks. The packaged check imports Torch, Transformers, and Core ML Tools without using a developer Python environment.
 
-ANE Studio source code is MIT licensed. Downloaded models retain their original licenses. See [`LICENSE`](LICENSE), [`MODEL_LICENSES.md`](MODEL_LICENSES.md), and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+A version tag matching `package.json` starts the [release workflow](.github/workflows/release.yml). It runs verification and creates a draft GitHub release. A maintainer must review model evidence and publish the draft. CI does not perform networked model conversion or prove observed accelerator activity.
+
+## Limits
+
+- Default conversion uses a fixed 64-token context. This is a small-model conversion lab, not a long-context chat replacement.
+- Architecture support and checkpoint validation are separate. See the current model support list before downloading large weights.
+- CPU+ANE compilation can be slow. A planned ANE assignment does not prove measured ANE activity.
+- The app is Apple Silicon only. Intel Macs, Windows, and Linux cannot run its Core ML worker.
+- Developer ID signing and notarization are not configured.
+- Model licenses can restrict commercial use even though the app is MIT licensed.
+
+## License and contributions
+
+Source code is MIT licensed. Downloaded models keep their original licenses. See [LICENSE](LICENSE), [MODEL_LICENSES.md](MODEL_LICENSES.md), [third-party notices](THIRD_PARTY_NOTICES.md), and [contributing](CONTRIBUTING.md).

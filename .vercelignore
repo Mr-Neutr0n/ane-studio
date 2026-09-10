@@ -1,0 +1,32 @@
+# Deploy only the public website. The desktop worker and local data stay on this Mac.
+**/*
+!vercel.json
+!website
+!website/**
+website/node_modules/**
+website/dist/**
+website/.env*
+website/.vercel/**
+website/.git/**
+website/test-results/**
+website/playwright-report/**
+website/coverage/**
+**/*.log
+**/.DS_Store
+
+# Negated directory rules must not re-include nested private or generated files.
+**/.env*
+**/.vercel/**
+**/.git/**
+**/.venv/**
+**/node_modules/**
+**/test-results/**
+**/playwright-report/**
+**/*.safetensors
+**/*.gguf
+**/*.mlpackage/**
+**/*.mlmodelc/**
+**/*.pt
+**/*.pth
+**/*.pem
+**/*.key

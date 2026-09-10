@@ -2,7 +2,7 @@
 
 ## Process boundaries
 
-ANE Studio uses three local layers:
+The desktop app uses three local layers:
 
 ```text
 Electron renderer
@@ -20,11 +20,13 @@ Python model worker
       +-- Core ML conversion and prediction
 ```
 
-The renderer has context isolation and sandboxing enabled. It cannot access Node.js, the filesystem, child processes, environment variables, or credentials.
+The renderer has context isolation and sandboxing enabled. It cannot access Node.js, the filesystem, child processes, environment variables, or saved credentials. The packaged renderer can load only its local assets. Permissions, embedded webviews, and navigation to other documents are blocked.
 
-The main process owns window lifecycle, credential encryption, worker supervision, cancellation, and IPC validation. It accepts only the worker commands listed in `src/main/index.ts`.
+The main process owns window lifecycle, credential encryption, worker supervision, cancellation, and IPC validation. Every IPC handler checks the sender, main frame, and loaded document URL. The shared contract validates command names, payload fields, model IDs, policies, and request sizes. External links need an allowed HTTPS host and native user confirmation.
 
 The Python worker owns model metadata, downloads, conversion, parity, chat, planned placement, and benchmark files. It emits compact JSON objects, one per line. Standard error is treated as a technical log and never parsed as protocol data.
+
+The desktop app uses a single-instance lock for its data directory. Standalone CLI workers do not share that lock. Give CLI smoke tests a separate `ANE_STUDIO_HOME`; do not run two workers against the same model directory.
 
 ## Artifact flow
 
@@ -38,18 +40,22 @@ metadata inspection -> supported architecture gate
 pinned local snapshot at an exact revision
         |
         v
-fixed-shape PyTorch trace -> FP16 Core ML .mlpackage
+fixed-shape PyTorch trace -> Core ML .mlpackage
         |                              |
         +---------- parity ------------+
                                        |
                            chat and policy tests
 ```
 
-A model record enters `ready` only when logit cosine similarity is at least `0.999` and the source and Core ML top token match. Failed artifacts remain local for diagnosis but cannot run.
+A new conversion checks four prompts against the original, unpatched Transformers forward. They include one token at position zero and a prompt that reaches the final context position. Every check needs finite, nonzero logits, cosine similarity of at least `0.999`, and matching top tokens. Trace rewrites are scoped and restored even after failure.
+
+LFM2 uses FP16 weights and conversion. Llama uses an FP32 source reference with selective FP16 conversion for matrix operations. Its other operations retain FP32. Qwen2 uses an FP32 reference and conversion because selective FP16 failed the one-token check. These choices preserve the parity gate rather than relaxing it for smaller artifacts. The parity record stores the precision mode, reference dtype, converter version, and individual checks. Failed artifacts remain local for diagnosis but cannot run.
 
 ## Runtime shape
 
-The first runtime uses one fixed 64-token graph. It right-pads prompts and passes the current final-token position into the model. Each generation step runs the complete fixed graph and returns one vocabulary logit vector. This makes the first implementation portable across the two adapters, but it is not a stateful decoder.
+The default runtime uses one fixed 64-token graph. It right-pads contiguous token IDs and passes the current final-token position into the model. The trace mask is valid only for that input contract, not left padding or gaps in an attention mask. Each generation step runs the complete fixed graph, selects the last hidden state, and projects it into one vocabulary logit vector.
+
+Generation feeds token IDs directly. It does not decode and re-encode the prompt at every step. The chat template, history, prompt, and reply share the fixed context. A prompt that fills the context is rejected with a request to shorten it or start a new chat. This is not a stateful decoder or a sliding-window chat runtime.
 
 A later stateful runtime should split prefill and decode, use Core ML state for KV or convolution caches where supported, and preserve the current parity and placement contracts.
 
@@ -75,8 +81,16 @@ models/<slug>/
   manifest.json
 ```
 
-The manifest records the source revision, architecture, parameter count, license identifier, sequence length, parity, artifact bytes, and artifact digest.
+The manifest records the source revision, architecture, parameter count, license identifier, sequence length, parity, artifact bytes, and artifact digest. Hugging Face metadata and source downloads use the same pinned revision. Managed paths reject symlinks. Manifest writes use an atomic replacement.
+
+Chat, benchmarks, and placement checks validate the manifest and artifact digest before use. Digest results are cached against a filesystem signature, not just the model ID. The worker keeps at most one loaded model and policy runtime. Preparing a model again invalidates that runtime. Hugging Face metadata has a separate cache under the app data directory.
 
 ## Cancellation
 
-Conversion runs synchronously inside the worker. Cancel stops the worker process and starts a clean one. Hugging Face and Core ML files already flushed to disk remain inspectable. A later preparation attempt overwrites the canonical artifact only after conversion reaches the save stage.
+Conversion runs synchronously inside the worker. Cancel stops the worker process group and rejects pending requests. A clean worker starts on the next request. Saving or deleting a token also stops the existing worker before the next request uses the new credentials. Startup and requests have time limits. Late responses from a stopped worker cannot update a replacement session.
+
+Hugging Face and Core ML files already flushed to disk remain inspectable. An interrupted record does not pass parity and can be prepared again. A later preparation attempt overwrites the canonical artifact only after conversion reaches the save stage. Closing the renderer stops its worker. App shutdown waits for worker termination.
+
+## Packaged runtime
+
+Source development starts the locked worker environment through `uv`. Release packaging builds a separate, relocatable CPython runtime with the locked worker dependencies and license notices. The packaged app launches that Python directly in isolated mode. It does not depend on Bun, uv, Homebrew, or a system Python installation. Model weights are not bundled.

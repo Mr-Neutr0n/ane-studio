@@ -16,7 +16,10 @@ def _command(*args: str) -> str:
 def hardware_info() -> dict[str, object]:
     architecture = platform.machine()
     version = platform.mac_ver()[0]
-    major = int(version.split(".")[0]) if version else 0
+    try:
+        major = int(version.split(".")[0]) if version else 0
+    except ValueError:
+        major = 0
     supported = platform.system() == "Darwin" and architecture == "arm64" and major >= 15
     reason = None
     if platform.system() != "Darwin":
@@ -34,6 +37,12 @@ def hardware_info() -> dict[str, object]:
         "osVersion": version,
         "chip": _command("sysctl", "-n", "machdep.cpu.brand_string") or "Unknown Apple Silicon",
         "memoryBytes": int(memory_text) if memory_text.isdigit() else 0,
-        "powerSource": "ac" if "AC Power" in battery else "battery",
+        "powerSource": (
+            "ac"
+            if "AC Power" in battery
+            else "battery"
+            if "Battery Power" in battery
+            else "unknown"
+        ),
         **({"reason": reason} if reason else {}),
     }
