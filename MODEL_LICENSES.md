@@ -23,6 +23,15 @@ These license checks do not prove training-data rights or model quality. Convers
 
 The LFM license includes attribution and commercial-use conditions, including a revenue threshold. It is not the same license as ANE Studio's MIT code or the Apache-licensed models above. Review the full terms before using or redistributing an LFM model or converted derivative.
 
+## LiquidAI LFM3
+
+`LiquidAI/LFM3-1.7B` uses the LFM Open License v1.0 for its weights. The reviewed
+local implementation comes from revision
+`40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd`. Its Apache-licensed source and the
+separate model license are retained under
+`worker/src/ane_studio_worker/vendor/lfm3/`. See the
+[pinned model card](https://huggingface.co/LiquidAI/LFM3-1.7B/blob/40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd/README.md).
+
 ## Converter fixture
 
 `yujiepan/qwen2-tiny-random` reports no license identifier. It is a local converter regression fixture, not a useful chat model or a bundled OSS model. No weights are redistributed by this project.

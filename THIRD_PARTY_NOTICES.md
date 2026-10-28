@@ -43,6 +43,13 @@ The runtime itself retains the distributions' license files and metadata. `Conte
 
 The inventory, not this short table, lists every bundled distribution. Exact application dependencies are locked in `bun.lock` and `worker/uv.lock`.
 
+The worker also bundles Liquid AI's pinned LFM3 implementation under
+`worker/src/ane_studio_worker/vendor/lfm3/`. Its Python source is Apache 2.0
+licensed. Two configuration compatibility changes, original source hashes, and
+the checkpoint revision are recorded in that directory's `provenance.json`.
+The source license text and model-weight license are included there. Downloaded
+checkpoint Python code is not executed.
+
 The release runtime uses CPython `3.12.13`, standalone build `20260510`. Standalone dependency notices come from [python-build-standalone revision f0ae464](https://github.com/astral-sh/python-build-standalone/tree/f0ae464f527498d6c4b13f19977447d603cd5edd). The Tokenizers `0.23.1` wheel omits its license file, so the build collects the Apache license from [its exact upstream revision](https://github.com/huggingface/tokenizers/tree/7f1623b90b5adfb9bc327d4c3468d2f70bbce262).
 
 The app does not modify certifi or tqdm source. Their corresponding source is available at [certifi](https://github.com/certifi/python-certifi) and [tqdm](https://github.com/tqdm/tqdm), at the versions in the runtime inventory. The build changes local Mach-O library references so the Python runtime can move with the app. Local ad-hoc signatures on those files are not Apple Developer ID signing or notarization.

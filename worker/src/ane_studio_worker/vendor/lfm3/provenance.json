@@ -1,0 +1,23 @@
+{
+  "repository": "LiquidAI/LFM3-1.7B",
+  "revision": "40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd",
+  "retrieved_at": "2026-10-28",
+  "source_license": "Apache-2.0, per upstream Python headers",
+  "model_license": "LFM Open License v1.0",
+  "upstream_sha256": {
+    "configuration_lfm3.py": "176cced35657aedfea7d7002221360582d1c05fcaca882c21508bc3a73b282e5",
+    "modeling_lfm3.py": "e8cd5254ea99ce6bd731b57b10908c2e8b5010ce8315341f895a38484885eeab",
+    "lfm3_conv.py": "80d4a985382a22774212759248a6b4c737bfbf9c2a47b3dd7f797dda748e4bb4"
+  },
+  "changes": [
+    {
+      "file": "configuration_lfm3.py",
+      "reason": "Transformers 5.16 compatibility: override validate_layer_type to retain conv labels and convert_rope_params_to_dict to retain nested per-attention-type RoPE. Reject legacy global RoPE overrides. Upstream architecture validation remains active."
+    }
+  ],
+  "vendored_sha256": {
+    "configuration_lfm3.py": "eac2836183f892b0e1ed0fe7fdb95e87d5e97473ba87d1a79677f3a9341f2788",
+    "modeling_lfm3.py": "e8cd5254ea99ce6bd731b57b10908c2e8b5010ce8315341f895a38484885eeab",
+    "lfm3_conv.py": "80d4a985382a22774212759248a6b4c737bfbf9c2a47b3dd7f797dda748e4bb4"
+  }
+}

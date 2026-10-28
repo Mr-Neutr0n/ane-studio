@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -54,7 +55,7 @@ def test_planned_placement_removes_compiler_output_after_failure(
     compute_plan.MLComputePlan = FailingPlan
     utils = ModuleType("coremltools.models.utils")
 
-    def compile_model(_package: str) -> str:
+    def compile_model(_package: str, **kwargs) -> str:
         compiled.mkdir(parents=True)
         (compiled / "model.bin").write_bytes(b"compiled")
         return str(compiled)
@@ -215,7 +216,7 @@ def test_generate_preserves_token_ids_without_round_trip(np) -> None:
     feeds = []
 
     def predict(feed):
-        feeds.append(feed)
+        feeds.append({name: value.copy() for name, value in feed.items()})
         return {"logits": np.asarray([[0.0, 0.0, 1.0]])}
 
     runtime.model = SimpleNamespace(predict=predict)
@@ -238,6 +239,33 @@ def test_context_exhaustion_is_explicit_and_does_not_drop_chat_template(np) -> N
         runtime.generate([{"role": "user", "content": "hello"}], 2, 0)
 
     assert runtime.tokenizer.calls == ["<template>user: hello assistant:"]
+
+
+def test_runtime_keeps_borrowed_prediction_buffers_alive_between_calls(np) -> None:
+    runtime = coreml_backend.CoreMLRuntime.__new__(coreml_backend.CoreMLRuntime)
+    runtime.np = np
+    runtime.sequence_length = 8
+    runtime.tokenizer = NonRoundTripTokenizer([10, 20])
+    borrowed = []
+    native_owners = []
+
+    def predict(feed):
+        borrowed.append({name: weakref.ref(value) for name, value in feed.items()})
+        native_owners.append(dict(feed))
+        return {"logits": np.asarray([[0.0, 0.0, 1.0]])}
+
+    runtime.model = SimpleNamespace(predict=predict)
+    runtime.generate([{"role": "user", "content": "hello"}], 2, 0)
+    runtime.generate([{"role": "user", "content": "again"}], 1, 0)
+    # Core ML may unbind old feature values after predict returns. Their numpy
+    # storage must still have a Python owner when that native reset occurs.
+    for name in ("input_ids", "attention_mask", "position"):
+        assert borrowed[0][name]() is not None
+        assert len({id(item[name]()) for item in borrowed}) == 3
+    assert borrowed[0]["input_ids"]().tolist() == [[10, 20, 0, 0, 0, 0, 0, 0]]
+    native_owners.clear()
+    coreml_backend.prune_prediction_inputs()
+    assert all(reference() is None for item in borrowed for reference in item.values())
 
 
 def test_token_inputs_right_pad_and_preserve_selected_position(np) -> None:

@@ -1,5 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { dirname, join } from "node:path";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { isWorkerEvent, type WorkerEvent, type WorkerResponse } from "../shared/contracts";
 
@@ -11,6 +13,7 @@ interface PendingRequest {
 
 interface WorkerSession {
   child: ChildProcessWithoutNullStreams;
+  temporaryDirectory: string;
   pending: Map<string, PendingRequest>;
   ready: boolean;
   stopped: boolean;
@@ -85,28 +88,43 @@ export class WorkerClient {
         delete env[key];
       }
     }
-    const child = spawn(executable, args, {
-      cwd: this.options.projectDirectory,
-      detached: process.platform !== "win32",
-      env: {
-        ...env,
-        ANE_STUDIO_HOME: this.options.dataDirectory,
-        HF_HOME: join(this.options.dataDirectory, "huggingface"),
-        HF_TOKEN: this.options.token || "",
-        HF_HUB_DISABLE_IMPLICIT_TOKEN: "1",
-        HF_HUB_DISABLE_TELEMETRY: "1",
-        DO_NOT_TRACK: "1",
-        PYTHONUNBUFFERED: "1",
-        PYTHONDONTWRITEBYTECODE: "1",
-        ...(this.options.environmentDirectory && !packaged
-          ? { UV_PROJECT_ENVIRONMENT: this.options.environmentDirectory }
-          : {}),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    // The backend moves completed Core ML compilations to explicit destinations
+    // under Python's TMPDIR before inference. Own that directory for crash cleanup.
+    mkdirSync(this.options.dataDirectory, { recursive: true, mode: 0o700 });
+    const temporaryDirectory = mkdtempSync(join(this.options.dataDirectory, ".worker-tmp-"));
+    const startupError = packaged
+      ? "The bundled Python runtime could not start. Download a fresh copy of ANE Studio."
+      : "The model worker could not start. Install uv, then run bun run worker:setup. Set ANE_STUDIO_UV to its absolute path if needed.";
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(executable, args, {
+        cwd: this.options.projectDirectory,
+        detached: process.platform !== "win32",
+        env: {
+          ...env,
+          ANE_STUDIO_HOME: this.options.dataDirectory,
+          TMPDIR: `${temporaryDirectory}${sep}`,
+          HF_HOME: join(this.options.dataDirectory, "huggingface"),
+          HF_TOKEN: this.options.token || "",
+          HF_HUB_DISABLE_IMPLICIT_TOKEN: "1",
+          HF_HUB_DISABLE_TELEMETRY: "1",
+          DO_NOT_TRACK: "1",
+          PYTHONUNBUFFERED: "1",
+          PYTHONDONTWRITEBYTECODE: "1",
+          ...(this.options.environmentDirectory && !packaged
+            ? { UV_PROJECT_ENVIRONMENT: this.options.environmentDirectory }
+            : {}),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+      throw new Error(startupError);
+    }
     let exit!: () => void;
     const session: WorkerSession = {
       child,
+      temporaryDirectory,
       pending: new Map(),
       ready: false,
       stopped: false,
@@ -148,15 +166,13 @@ export class WorkerClient {
       void this.terminate(session);
     });
     child.once("error", () => {
-      const hint = packaged
-        ? "The bundled Python runtime could not start. Download a fresh copy of ANE Studio."
-        : "The model worker could not start. Install uv, then run bun run worker:setup. Set ANE_STUDIO_UV to its absolute path if needed.";
-      this.failAll(session, new Error(hint));
+      this.failAll(session, new Error(startupError));
       session.stopped = true;
       if (this.session === session) this.session = undefined;
       stdout.close();
       stderr.close();
       exit();
+      void this.terminate(session);
     });
     child.once("exit", (code, signal) => {
       stdout.close();
@@ -180,6 +196,7 @@ export class WorkerClient {
       );
       session.stopped = true;
       exit();
+      void this.terminate(session);
     });
     try {
       await this.send(session, "health", {}, this.options.startupTimeoutMs ?? 120_000);
@@ -249,21 +266,33 @@ export class WorkerClient {
 
   private terminate(session: WorkerSession): Promise<void> {
     if (session.termination) return session.termination;
-    const stopping = this.endSession(session);
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const stopping = new Promise<void>((accept, fail) => {
+      resolve = accept;
+      reject = fail;
+    });
     session.termination = stopping;
     this.stopping = stopping;
+    void this.endSession(session).then(resolve, reject);
     void stopping
       .finally(() => {
         if (this.stopping === stopping) this.stopping = undefined;
       })
-      .catch(() => {});
+      .catch(() => {
+        this.options.onLog("Could not finish cleaning up model worker temporary files.");
+      });
     return stopping;
   }
 
   private async endSession(session: WorkerSession): Promise<void> {
     if (this.session === session) this.session = undefined;
     this.failAll(session, new Error("Operation cancelled."));
-    if (session.stopped) return await session.exited;
+    if (session.stopped) {
+      await session.exited;
+      await rm(session.temporaryDirectory, { recursive: true, force: true });
+      return;
+    }
     session.stopped = true;
     const kill = (signal: NodeJS.Signals) => {
       try {
@@ -283,6 +312,7 @@ export class WorkerClient {
     } finally {
       clearTimeout(timer);
     }
+    await rm(session.temporaryDirectory, { recursive: true, force: true });
   }
 
   private handleLine(session: WorkerSession, line: string): void {

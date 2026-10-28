@@ -51,6 +51,12 @@ A new conversion checks four prompts against the original, unpatched Transformer
 
 LFM2 uses FP16 weights and conversion. Llama uses an FP32 source reference with selective FP16 conversion for matrix operations. Its other operations retain FP32. Qwen2 uses an FP32 reference and conversion because selective FP16 failed the one-token check. These choices preserve the parity gate rather than relaxing it for smaller artifacts. The parity record stores the precision mode, reference dtype, converter version, and individual checks. Failed artifacts remain local for diagnosis but cannot run.
 
+LFM3 also requires an FP32 source and full FP32 conversion for the tested 1.7B
+checkpoint. Its bundled local adapter preserves the tri-hybrid architecture;
+downloaded model code remains disabled. Optional thinking is disabled through
+its chat template for the short graph. See [model support](model-support.md) for
+the pinned implementation, rejected precision variants, and numerical evidence.
+
 ## Runtime shape
 
 The default runtime uses one fixed 64-token graph. It right-pads contiguous token IDs and passes the current final-token position into the model. The trace mask is valid only for that input contract, not left padding or gaps in an attention mask. Each generation step runs the complete fixed graph, selects the last hidden state, and projects it into one vocabulary logit vector.
@@ -67,7 +73,19 @@ The app records three levels:
 2. Planned: `MLComputePlan` anticipated operation placement.
 3. Observed: Instruments activity overlapped a signed inference interval.
 
-The current app automates the first two. It records observed placement as not captured. Timing runs and profiling runs must remain separate because Instruments changes latency. The worker redirects Core ML compilation into a managed directory beside the model package and removes that directory after model loading or compute-plan inspection.
+The desktop UI automates the first two. It records observed placement as not
+captured for its timing runs. A separate developer tool captures aligned
+Instruments evidence. Timing and profiling remain separate because Instruments
+changes latency. The worker explicitly moves completed native compilations into
+Python-managed temporary directories and retains them for the loaded model's
+lifetime. Electron gives each worker a private temporary directory and removes
+it after termination. Initial native compilation still uses Foundation's own
+temporary directory until the completed model can be moved.
+
+The pinned Core ML Python bridge can release borrowed NumPy inputs on a native
+queue without the GIL. The worker retains immutable input arrays until their
+native owners release them; it never changes a still-borrowed input in place.
+This mitigates the known binding issue while keeping the same model math.
 
 ## Local storage
 

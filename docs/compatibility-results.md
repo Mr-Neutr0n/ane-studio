@@ -1,5 +1,9 @@
 # Apple M5 compatibility results
 
+The newer [2026-10-28 execution checks](ane-observations.md) contain aligned
+Instruments evidence for the app's LFM2.5 models and CPU fallback observations
+for Qwen and SmolLM2. The measurements below retain their original test dates.
+
 Test date: 2026-09-08. Host: Apple M5 MacBook Air, 16 GB unified memory, macOS 26.4.1 build 25E253. These are local compatibility checks, not cross-machine performance claims.
 
 Environment: Python 3.12.13, PyTorch 2.7.0, Transformers 5.16.1, coremltools 9.0, NumPy 2.2.6. Jobs ran sequentially. Generated weights, packages, logs and machine-readable results are outside Git under `/tmp/ane-audit/`.

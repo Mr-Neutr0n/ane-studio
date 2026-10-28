@@ -5,12 +5,15 @@ import json
 import shutil
 import tempfile
 import time
+import weakref
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from .events import EventWriter, event
+from .input_owners import hold as hold_prediction_inputs
+from .input_owners import prune as prune_prediction_inputs
 
 POLICIES = {
     "cpuOnly": "CPU_ONLY",
@@ -50,17 +53,45 @@ def _patch_trace_gaps(
         "Lfm2ForCausalLM": "lfm2",
         "Qwen2ForCausalLM": "qwen2",
         "LlamaForCausalLM": "llama",
+        "Lfm3ForCausalLM": "lfm3",
     }
     family = module_names.get(architecture)
     if family is None:
         raise ValueError(f"No trace adapter for {architecture}.")
-    modeling = importlib.import_module(f"transformers.models.{family}.modeling_{family}")
+    module_name = (
+        "ane_studio_worker.vendor.lfm3.modeling_lfm3"
+        if architecture == "Lfm3ForCausalLM"
+        else f"transformers.models.{family}.modeling_{family}"
+    )
+    modeling = importlib.import_module(module_name)
     mask = torch.zeros(1, 1, sequence_length, sequence_length, dtype=torch.float32)
     if sequence_length > 1:
         mask = torch.triu(
             torch.full((sequence_length, sequence_length), -10_000.0, dtype=torch.float32),
             diagonal=1,
         )[None, None]
+    if architecture == "Lfm3ForCausalLM":
+        original_masks = modeling.create_masks_by_layer_type
+
+        def fixed_masks(config, inputs_embeds, attention_mask, **kwargs):
+            # The app admits at most 256 tokens, no longer than LFM3's sliding
+            # window. Both attention kinds therefore use the same causal mask.
+            if sequence_length > config.sliding_window:
+                raise ValueError("LFM3's fixed graph must fit its sliding attention window.")
+            causal = mask.to(inputs_embeds.dtype)
+            return {
+                "full_attention": causal,
+                "sliding_attention": causal,
+                "conv": attention_mask,
+            }
+
+        try:
+            modeling.create_masks_by_layer_type = fixed_masks
+            yield
+        finally:
+            modeling.create_masks_by_layer_type = original_masks
+        return
+
     original_mask = modeling.create_causal_mask
     original_conv = None
     try:
@@ -175,8 +206,8 @@ def _fp16_matrix_operation(operation: Any) -> bool:
 
 
 def _compute_precision(architecture: str, ct: Any) -> Any:
-    if architecture == "Qwen2ForCausalLM":
-        # Qwen2.5's position-zero fixture fails even with FP16 linear only.
+    if architecture in {"Qwen2ForCausalLM", "Lfm3ForCausalLM"}:
+        # Real checkpoints fail the short/position-zero gates under FP16 lowering.
         return ct.precision.FLOAT32
     if architecture == "LlamaForCausalLM":
         return ct.transform.FP16ComputePrecision(op_selector=_fp16_matrix_operation)
@@ -194,8 +225,12 @@ def convert_model(
 ) -> dict[str, Any]:
     ct, np, torch, auto = _imports()
     AutoModelForCausalLM, AutoTokenizer = auto
+    if architecture == "Lfm3ForCausalLM":
+        from .vendor.lfm3 import register
+
+        register()
     mixed_precision = architecture == "LlamaForCausalLM"
-    fp32_conversion = architecture == "Qwen2ForCausalLM"
+    fp32_conversion = architecture in {"Qwen2ForCausalLM", "Lfm3ForCausalLM"}
     fp32_source = mixed_precision or fp32_conversion
     event(
         write,
@@ -322,9 +357,10 @@ def convert_model(
         message="Checking Core ML output against the unpatched source model",
     )
     checks = []
-    with _managed_compile_directory(output.parent):
-        coreml_model = ct.models.MLModel(str(output), compute_units=ct.ComputeUnit.CPU_ONLY)
+    coreml_model = _load_compiled_model(output, ct.ComputeUnit.CPU_ONLY, ct)
     for (name, _), feed, reference in zip(prompts, feeds, references, strict=True):
+        prune_prediction_inputs()
+        hold_prediction_inputs(feed)
         prediction = coreml_model.predict(feed)["logits"]
         checks.append(
             {
@@ -369,6 +405,25 @@ def _managed_compile_directory(parent: Path):
             tempfile.tempdir = previous
 
 
+def _load_compiled_model(package: Path, compute_units: Any, ct: Any) -> Any:
+    # Foundation ignores TMPDIR for implicit compilation. Move the completed
+    # native compilation into Python's session-owned temp directory before load.
+    # The Electron supervisor removes that directory after worker crash/cancel.
+    from coremltools.models.utils import compile_model
+
+    temporary = tempfile.TemporaryDirectory(prefix="ane-studio-runtime-")
+    try:
+        compiled = compile_model(
+            str(package), destination_path=str(Path(temporary.name) / "model.mlmodelc")
+        )
+        model = ct.models.CompiledMLModel(compiled, compute_units=compute_units)
+    except BaseException:
+        temporary.cleanup()
+        raise
+    weakref.finalize(model, temporary.cleanup)
+    return model
+
+
 class CoreMLRuntime:
     def __init__(self, package: Path, source: Path, sequence_length: int, policy: str) -> None:
         ct, np, _, auto = _imports()
@@ -376,6 +431,14 @@ class CoreMLRuntime:
         self.ct = ct
         self.np = np
         self.sequence_length = sequence_length
+        config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+        if config.get("model_type") == "lfm3":
+            from .vendor.lfm3 import register
+
+            register()
+        self.chat_template_options = (
+            {"enable_thinking": False} if config.get("model_type") == "lfm3" else {}
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(
             source, local_files_only=True, trust_remote_code=False
         )
@@ -383,16 +446,15 @@ class CoreMLRuntime:
         unit_name = POLICIES.get(policy)
         if not unit_name:
             raise ValueError(f"Unknown compute policy: {policy}")
-        with _managed_compile_directory(package.parent):
-            self.model = ct.models.MLModel(
-                str(package),
-                compute_units=getattr(ct.ComputeUnit, unit_name),
-            )
+        self.model = _load_compiled_model(package, getattr(ct.ComputeUnit, unit_name), ct)
 
     def prompt_text(self, messages: list[dict[str, str]]) -> str:
         try:
             return self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **getattr(self, "chat_template_options", {}),
             )
         except (ValueError, TypeError, AttributeError):
             lines = [f"{message['role'].title()}: {message['content']}" for message in messages]
@@ -421,6 +483,10 @@ class CoreMLRuntime:
         stop_reason = "contextLimit" if capacity < max_new_tokens else "maxTokens"
         for _ in range(min(max_new_tokens, capacity)):
             feed, _ = _token_inputs(self.tokenizer, ids, self.sequence_length, self.np)
+            # Core ML may keep these arrays bound after predict returns. Retain
+            # each immutable feed until its native references have been released.
+            prune_prediction_inputs()
+            hold_prediction_inputs(feed)
             started = time.perf_counter_ns()
             logits = self.model.predict(feed)["logits"].astype(self.np.float32)[0]
             duration = (time.perf_counter_ns() - started) / 1_000_000
@@ -476,9 +542,12 @@ def planned_placement(package: Path, policy: str) -> dict[str, Any]:
 
         unit_name = POLICIES[policy]
         compiled: str | None = None
-        with _managed_compile_directory(package.parent):
+        with tempfile.TemporaryDirectory(prefix="ane-studio-plan-") as directory:
+            managed = Path(directory)
             try:
-                compiled = compile_model(str(package))
+                compiled = compile_model(
+                    str(package), destination_path=str(managed / "model.mlmodelc")
+                )
                 plan = MLComputePlan.load_from_path(
                     compiled,
                     compute_units=getattr(ct.ComputeUnit, unit_name),

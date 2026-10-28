@@ -26,6 +26,33 @@ Every check must pass. The manifest stores individual checks. Its aggregate cosi
 
 ## Registered adapters
 
+### LFM3
+
+`Lfm3ForCausalLM` uses the reviewed local implementation pinned to Liquid AI's
+revision `40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd`. The worker explicitly registers
+its local configuration/model classes. It keeps `trust_remote_code=False` and
+does not download or execute checkpoint Python files. Provenance, source license,
+model license, and two Transformers configuration compatibility changes are in
+`worker/src/ane_studio_worker/vendor/lfm3/`.
+
+The adapter preserves width-7 gated convolutions, global and sliding attention,
+per-head sigmoid gates, sandwich RMSNorm, and per-attention-type partial RoPE.
+Its fixed mask applies only to the existing contiguous right-padded input
+contract and graph lengths no greater than the model's sliding window.
+
+`LiquidAI/LFM3-1.7B` passed all four production fixtures with an FP32 source and
+full FP32 Core ML conversion. Minimum cosine was `0.999999999446`, maximum
+absolute error was `0.0004529953`, and all top tokens matched. The package was
+6,916,376,504 bytes. FP16 source/matrix lowering failed position zero; FP32 source
+with matrix-only FP16 lowering still failed two short fixtures. No threshold,
+normalization epsilon, or checkpoint weights were changed.
+
+The short graph disables optional thinking through the checkpoint's chat
+template so the 64-token budget can hold a reply. It still does not reproduce
+the model's advertised long context. The multimodal LFM3 variants require
+separate architectures and are outside this text-only adapter. Runtime evidence
+is recorded in [ANE execution checks](ane-observations.md).
+
 ### LFM2
 
 `Lfm2ForCausalLM` combines short convolutions and grouped-query attention. The trace adapter replaces the dynamic causal mask with a fixed additive mask and uses the declared convolution kernel size as a trace constant. Patches restore the original functions even when tracing fails.

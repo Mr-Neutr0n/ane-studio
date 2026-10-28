@@ -7,6 +7,7 @@ from ane_studio_worker.catalog import (
 
 def test_curated_models_cover_registered_architectures() -> None:
     assert {model["id"] for model in CURATED_MODELS} == {
+        "LiquidAI/LFM3-1.7B",
         "LiquidAI/LFM2.5-230M",
         "LiquidAI/LFM2.5-350M",
         "WeiboAI/VibeThinker-3B",

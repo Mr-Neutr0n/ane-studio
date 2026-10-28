@@ -11,6 +11,7 @@ worker/.venv/
 worker/.pytest_cache/
 worker/**/__pycache__/
 worker/**/*.pyc
+scripts/__pycache__/
 
 artifacts/
 results/

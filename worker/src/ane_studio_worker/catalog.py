@@ -2,6 +2,20 @@ from __future__ import annotations
 
 CURATED_MODELS = (
     {
+        "id": "LiquidAI/LFM3-1.7B",
+        "label": "LFM3 1.7B",
+        "description": "Liquid AI's tri-hybrid text model for local agents.",
+        "parameters": 1_728_801_536,
+        "architecture": "Lfm3ForCausalLM",
+        "license": "LFM Open License 1.0",
+        "releasedAt": "2026-10-27",
+        "recommended": False,
+        "caution": (
+            "FP32 preserves parity. The converted package is about 6.9 GB. "
+            "Use GPU for chat. CPU+ANE fell back to CPU in the M5 check."
+        ),
+    },
+    {
         "id": "Qwen/Qwen2.5-0.5B-Instruct",
         "label": "Qwen2.5 0.5B Instruct",
         "description": "An Apache-licensed instruction model for short local conversations.",
@@ -57,6 +71,7 @@ CURATED_MODELS = (
 )
 
 SUPPORTED_ARCHITECTURES = {
+    "Lfm3ForCausalLM": "lfm3",
     "Lfm2ForCausalLM": "lfm2",
     "Qwen2ForCausalLM": "qwen2",
     "LlamaForCausalLM": "llama",

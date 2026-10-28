@@ -67,7 +67,10 @@ A CPU+ANE policy is not "ANE-only." Core ML can partition the graph or fall back
 - Planned placement, the device assignments in `MLComputePlan`.
 - Observed placement, accelerator activity in an Instruments trace aligned with inference.
 
-The app automates requested and planned evidence. Observed activity is not captured automatically. Keep profiling separate from timing because Instruments changes latency.
+The app automates requested and planned evidence. A developer profiling tool captures
+observed activity separately. [October 2026 execution checks](docs/ane-observations.md)
+confirmed ANE activity for the tested LFM2.5 packages. Keep profiling separate from
+timing because Instruments changes latency.
 
 ### Measured M5 smoke result
 

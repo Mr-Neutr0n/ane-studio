@@ -139,7 +139,7 @@ function App(): React.JSX.Element {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [generation, setGeneration] = useState<ChatResult>();
   const [prompt, setPrompt] = useState("");
-  const [policy, setPolicy] = useState<ComputePolicy>("cpuAndNeuralEngine");
+  const [policy, setPolicy] = useState<ComputePolicy>("all");
   const [benchmark, setBenchmark] = useState<BenchmarkReport>();
   const [showLogs, setShowLogs] = useState(false);
   const [showToken, setShowToken] = useState(false);

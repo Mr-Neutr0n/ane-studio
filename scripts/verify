@@ -17,9 +17,9 @@ echo "==> Release tooling tests"
 bun test scripts/release-tooling.test.ts
 
 echo "==> Worker checks"
-uv run --project worker --extra coreml --extra test --locked ruff format --check worker scripts/bundle-runtime.py
-uv run --project worker --extra coreml --extra test --locked ruff check worker scripts/bundle-runtime.py
-uv run --project worker --extra coreml --extra test --locked pytest
+uv run --project worker --extra coreml --extra test --locked ruff format --check worker scripts/bundle-runtime.py scripts/profile-model.py scripts/summarize-profile.py
+uv run --project worker --extra coreml --extra test --locked ruff check worker scripts/bundle-runtime.py scripts/profile-model.py scripts/summarize-profile.py
+uv run --project worker --extra coreml --extra test --locked pytest -c worker/pyproject.toml worker/tests
 
 echo "==> Production build"
 bun run build

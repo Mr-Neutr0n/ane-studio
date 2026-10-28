@@ -4,8 +4,15 @@ import { PassThrough, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkerClient } from "../src/main/worker";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  mkdirSync: vi.fn(),
+  mkdtempSync: vi.fn(),
+  rm: vi.fn(),
+}));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("node:fs", () => ({ mkdirSync: mocks.mkdirSync, mkdtempSync: mocks.mkdtempSync }));
+vi.mock("node:fs/promises", () => ({ rm: mocks.rm }));
 
 class FakeChild extends EventEmitter {
   pid: number;
@@ -52,9 +59,7 @@ function client(options: Partial<ConstructorParameters<typeof WorkerClient>[0]> 
   return value;
 }
 async function tick() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 async function ready(value: WorkerClient) {
   autoReplyHealth = true;
@@ -75,6 +80,13 @@ beforeEach(() => {
   logs.mockReset();
   events.mockReset();
   mocks.spawn.mockReset();
+  mocks.mkdirSync.mockReset();
+  mocks.mkdtempSync.mockReset();
+  mocks.rm.mockReset();
+  mocks.rm.mockResolvedValue(undefined);
+  mocks.mkdtempSync.mockImplementation(
+    (prefix) => `${prefix}${mocks.mkdtempSync.mock.calls.length}`,
+  );
   mocks.spawn.mockImplementation(() => {
     const child = new FakeChild(100_000 + children.length);
     children.push(child);
@@ -133,6 +145,15 @@ describe("WorkerClient", () => {
     expect(options.env.HF_HUB_DISABLE_TELEMETRY).toBe("1");
     expect(options.env.HUGGING_FACE_HUB_TOKEN).toBeUndefined();
     expect(options.env.PYTHONPATH).toBeUndefined();
+    expect(mocks.mkdirSync).toHaveBeenCalledWith("/tmp/ane-worker-test", {
+      recursive: true,
+      mode: 0o700,
+    });
+    expect(mocks.mkdtempSync).toHaveBeenCalledWith("/tmp/ane-worker-test/.worker-tmp-");
+    expect(options.env.TMPDIR).toBe("/tmp/ane-worker-test/.worker-tmp-1/");
+    expect(mocks.mkdtempSync.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.spawn.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("recovers after spawn failure without exposing raw error text", async () => {
@@ -141,6 +162,10 @@ describe("WorkerClient", () => {
     const check = expect(start).rejects.toThrow("bundled Python runtime");
     children[0]?.emit("error", new Error("private path and credentials"));
     await check;
+    expect(mocks.rm).toHaveBeenCalledWith("/tmp/ane-worker-test/.worker-tmp-1", {
+      recursive: true,
+      force: true,
+    });
     await ready(value);
     expect(mocks.spawn).toHaveBeenCalledTimes(2);
     expect(logs).not.toHaveBeenCalled();
@@ -154,6 +179,68 @@ describe("WorkerClient", () => {
     await check;
     expect(process.kill).toHaveBeenCalledWith(-100_000, "SIGTERM");
     await ready(value);
+  });
+
+  it("removes only its allocated temp directory when spawn throws synchronously", async () => {
+    mocks.spawn.mockImplementationOnce(() => {
+      throw new Error("private spawn detail");
+    });
+    const value = client({ packaged: true });
+    await expect(value.start()).rejects.toThrow("bundled Python runtime");
+    expect(mocks.rm).toHaveBeenCalledExactlyOnceWith("/tmp/ane-worker-test/.worker-tmp-1", {
+      recursive: true,
+      force: true,
+    });
+    await ready(value);
+    expect(mocks.spawn.mock.calls[1]?.[2].env.TMPDIR).toBe("/tmp/ane-worker-test/.worker-tmp-2/");
+  });
+
+  it("keeps native temp files until cancellation terminates the worker group", async () => {
+    const value = client();
+    const child = await ready(value);
+    child.exitOnKill = false;
+    const stopping = value.stop();
+    await tick();
+    expect(process.kill).toHaveBeenCalledWith(-child.pid, "SIGTERM");
+    expect(mocks.rm).not.toHaveBeenCalled();
+    child.emit("exit", null, "SIGTERM");
+    await stopping;
+    expect(process.kill).toHaveBeenCalledWith(-child.pid, "SIGKILL");
+    expect(mocks.rm).toHaveBeenCalledExactlyOnceWith("/tmp/ane-worker-test/.worker-tmp-1", {
+      recursive: true,
+      force: true,
+    });
+    expect(mocks.rm.mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(process.kill).mock.invocationCallOrder.at(-1) ?? 0,
+    );
+  });
+
+  it("waits for crashed-session temp cleanup before starting a fresh session", async () => {
+    const value = client();
+    const child = await ready(value);
+    let finishCleanup!: () => void;
+    mocks.rm.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve;
+        }),
+    );
+    child.emit("exit", 1, null);
+    await tick();
+    expect(process.kill).toHaveBeenCalledWith(-child.pid, "SIGKILL");
+    expect(mocks.rm).toHaveBeenCalledExactlyOnceWith("/tmp/ane-worker-test/.worker-tmp-1", {
+      recursive: true,
+      force: true,
+    });
+    const replacement = value.start();
+    await tick();
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    finishCleanup();
+    await tick();
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    expect(mocks.spawn.mock.calls[1]?.[2].env.TMPDIR).toBe("/tmp/ane-worker-test/.worker-tmp-2/");
+    children[1]?.reply(0, { supported: true });
+    await replacement;
   });
 
   it("rejects pending work on cancel and ignores an old worker's events and exit", async () => {

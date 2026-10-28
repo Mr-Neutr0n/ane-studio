@@ -1,0 +1,10 @@
+# Preserve upstream formatting so its source hashes remain useful for review.
+extend = "../../../../pyproject.toml"
+
+[lint.per-file-ignores]
+"configuration_lfm3.py" = ["E501", "I001"]
+"modeling_lfm3.py" = ["E501", "I001"]
+"lfm3_conv.py" = ["E501", "I001", "B905"]
+
+[format]
+exclude = ["configuration_lfm3.py", "modeling_lfm3.py", "lfm3_conv.py"]

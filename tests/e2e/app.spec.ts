@@ -118,6 +118,7 @@ test("offline UI starts, navigates, and fits the minimum window", async ({ studi
   const { page, application } = studio;
   await expect(page).toHaveTitle("ANE Studio");
   await expect(page.getByText("Apple Silicon UI fixture", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Requested policy")).toHaveValue("all");
   await expect(page.getByLabel("Message the local model")).toBeDisabled();
   await page.getByRole("button", { name: "Tests", exact: true }).click();
   await expect(page.getByRole("button", { name: "Run all tests" })).toBeDisabled();

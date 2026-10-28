@@ -16,7 +16,7 @@
     "check": "biome check .",
     "format": "biome check --write .",
     "worker:setup": "uv sync --project worker --extra coreml --locked",
-    "worker:test": "uv run --project worker --extra coreml --extra test --locked pytest",
+    "worker:test": "uv run --project worker --extra coreml --extra test --locked pytest -c worker/pyproject.toml worker/tests",
     "verify": "./scripts/verify",
     "runtime:prepare": "bun scripts/prepare-runtime.ts",
     "runtime:check": "bun scripts/check-runtime.ts",

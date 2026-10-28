@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-28",
+  "host": {
+    "chip": "Apple M5",
+    "memoryBytes": 17179869184,
+    "os": "macOS26.4.1",
+    "osBuild": "25E253",
+    "instruments": "16.0 (17F113)"
+  },
+  "method": "production worker chat; Instruments Core ML + Points of Interest; PID-matched generation intervals; ANE prediction lane; CPU-only controls",
+  "timingSuitableForPerformanceClaims": false,
+  "models": [
+    {
+      "modelId": "LiquidAI/LFM2.5-230M",
+      "revision": "40cb2ad3b3044d5a41eee083a6103c8b523afa45",
+      "artifactSha256": "5c3fca94a41d35543d9ac7cfe84b173cc3a9f563fd4a2f94b15458d18abbec6e",
+      "requestedPolicy": "cpuAndNeuralEngine",
+      "completeGenerationIntervals": 8,
+      "workerPredictions": 80,
+      "anePredictionIntervalsInTrace": 80,
+      "anePredictionIntervalsOverlappingGeneration": 80,
+      "anePredictionsPerGeneration": [10, 10, 10, 10, 10, 10, 10, 10],
+      "aneObservedDuringEveryGeneration": true
+    },
+    {
+      "modelId": "LiquidAI/LFM2.5-350M",
+      "revision": "9e6c6ccf47cd318696e137d381a7ded8fe4df09f",
+      "artifactSha256": "57e8165159831479c69eb0ec0d9f6b0f2feaca19a4e087b6d2521ce58a0c0a62",
+      "requestedPolicy": "cpuAndNeuralEngine",
+      "completeGenerationIntervals": 8,
+      "workerPredictions": 24,
+      "anePredictionIntervalsInTrace": 24,
+      "anePredictionIntervalsOverlappingGeneration": 24,
+      "anePredictionsPerGeneration": [3, 3, 3, 3, 3, 3, 3, 3],
+      "aneObservedDuringEveryGeneration": true
+    },
+    {
+      "modelId": "HuggingFaceTB/SmolLM2-135M-Instruct",
+      "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+      "artifactSha256": "366c21f160d46f087122c41c3440345c11b0a2315587ded880c93488b72e5bd6",
+      "requestedPolicy": "cpuAndNeuralEngine",
+      "completeGenerationIntervals": 8,
+      "workerPredictions": 24,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0, 0, 0, 0, 0, 0, 0],
+      "aneObservedDuringEveryGeneration": false
+    },
+    {
+      "modelId": "Qwen/Qwen2.5-0.5B-Instruct",
+      "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+      "artifactSha256": "b3681f98acfef6a87527c7d6fce5726c544103aef414d2125ec06c399a93c9bf",
+      "requestedPolicy": "cpuAndNeuralEngine",
+      "completeGenerationIntervals": 4,
+      "workerPredictions": 40,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0, 0, 0],
+      "aneObservedDuringEveryGeneration": false
+    },
+    {
+      "modelId": "LiquidAI/LFM3-1.7B",
+      "revision": "40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd",
+      "artifactSha256": "519c63bef53442b6dd71e51fc72d236a9b4aba56dda81688b41e84ae6ecb2a49",
+      "requestedPolicy": "cpuAndNeuralEngine",
+      "completeGenerationIntervals": 2,
+      "workerPredictions": 2,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0],
+      "aneObservedDuringEveryGeneration": false,
+      "workloadNote": "two complete one-token probes; not full-reply timing"
+    }
+  ],
+  "controls": [
+    {
+      "modelId": "LiquidAI/LFM2.5-230M",
+      "revision": "40cb2ad3b3044d5a41eee083a6103c8b523afa45",
+      "artifactSha256": "5c3fca94a41d35543d9ac7cfe84b173cc3a9f563fd4a2f94b15458d18abbec6e",
+      "requestedPolicy": "cpuOnly",
+      "completeGenerationIntervals": 8,
+      "workerPredictions": 80,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0, 0, 0, 0, 0, 0, 0],
+      "aneObservedDuringEveryGeneration": false
+    },
+    {
+      "modelId": "LiquidAI/LFM2.5-350M",
+      "revision": "9e6c6ccf47cd318696e137d381a7ded8fe4df09f",
+      "artifactSha256": "57e8165159831479c69eb0ec0d9f6b0f2feaca19a4e087b6d2521ce58a0c0a62",
+      "requestedPolicy": "cpuOnly",
+      "completeGenerationIntervals": 8,
+      "workerPredictions": 24,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0, 0, 0, 0, 0, 0, 0],
+      "aneObservedDuringEveryGeneration": false
+    },
+    {
+      "modelId": "HuggingFaceTB/SmolLM2-135M-Instruct",
+      "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+      "artifactSha256": "366c21f160d46f087122c41c3440345c11b0a2315587ded880c93488b72e5bd6",
+      "requestedPolicy": "cpuOnly",
+      "completeGenerationIntervals": 4,
+      "workerPredictions": 12,
+      "anePredictionIntervalsInTrace": 0,
+      "anePredictionIntervalsOverlappingGeneration": 0,
+      "anePredictionsPerGeneration": [0, 0, 0, 0],
+      "aneObservedDuringEveryGeneration": false
+    }
+  ],
+  "localEvidenceDirectory": "artifacts/ane-audit-2026-10-28",
+  "lfm3Conversion": {
+    "revision": "40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd",
+    "artifactBytes": 6916376504,
+    "artifactSha256": "519c63bef53442b6dd71e51fc72d236a9b4aba56dda81688b41e84ae6ecb2a49",
+    "parity": {
+      "checks": [
+        {
+          "coremlToken": 4741,
+          "cosineSimilarity": 0.9999999998498013,
+          "maximumAbsoluteError": 0.0002884864807128906,
+          "name": "completion",
+          "position": 4,
+          "sourceToken": 4741,
+          "status": "passed",
+          "topTokenMatches": true
+        },
+        {
+          "coremlToken": 6206,
+          "cosineSimilarity": 0.9999999995508382,
+          "maximumAbsoluteError": 0.00023889541625976562,
+          "name": "short",
+          "position": 4,
+          "sourceToken": 6206,
+          "status": "passed",
+          "topTokenMatches": true
+        },
+        {
+          "coremlToken": 4992,
+          "cosineSimilarity": 0.9999999994455826,
+          "maximumAbsoluteError": 0.00045299530029296875,
+          "name": "first-token",
+          "position": 0,
+          "sourceToken": 4992,
+          "status": "passed",
+          "topTokenMatches": true
+        },
+        {
+          "coremlToken": 278,
+          "cosineSimilarity": 0.9999999999950598,
+          "maximumAbsoluteError": 7.534027099609375e-5,
+          "name": "context-boundary",
+          "position": 63,
+          "sourceToken": 278,
+          "status": "passed",
+          "topTokenMatches": true
+        }
+      ],
+      "computePrecision": "fp32",
+      "converterVersion": 3,
+      "coremlToken": 4741,
+      "cosineSimilarity": 0.9999999994455826,
+      "maximumAbsoluteError": 0.00045299530029296875,
+      "name": "completion",
+      "position": 4,
+      "reference": "unpatched-transformers-fp32",
+      "sourceToken": 4741,
+      "status": "passed",
+      "topTokenMatches": true
+    },
+    "resources": {
+      "exitCode": 0,
+      "elapsedSeconds": 194.603743584,
+      "peakResidentBytes": 7652556800,
+      "stopReason": null
+    }
+  },
+  "lfm3RejectedPrecisionAttempts": [
+    {
+      "reference": "unpatched-transformers-fp16",
+      "precision": "fp16-matrices-fp32-sensitive-ops",
+      "minimumCosine": 0.9981158180113109,
+      "status": "failed"
+    },
+    {
+      "reference": "unpatched-transformers-fp32",
+      "precision": "fp16-matrices-fp32-sensitive-ops",
+      "minimumCosine": 0.9985655747195062,
+      "status": "failed"
+    }
+  ],
+  "lfm3ChatChecks": [
+    {
+      "policy": "cpuAndGPU",
+      "successfulGenerations": 3,
+      "replies": [
+        "Hello! How can I help you today?",
+        "Hello! How can I help you today?",
+        "Hello! How can I help you today?"
+      ],
+      "stopReasons": ["eos", "eos", "eos"]
+    },
+    {
+      "policy": "all",
+      "successfulGenerations": 2,
+      "replies": ["Hello! How can I help you today?", "Hello! How can I help you today?"],
+      "stopReasons": ["eos", "eos"]
+    }
+  ],
+  "lfm3ElectronCheck": {
+    "modelId": "LiquidAI/LFM3-1.7B",
+    "revision": "40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd",
+    "requestedPolicy": "cpuOnly",
+    "prompt": "Name one planet.",
+    "text": "One planet is **Earth**.",
+    "termination": "6 output tokens. Stopped at the end-of-sequence token. Final context used 21/64 tokens."
+  }
+}
