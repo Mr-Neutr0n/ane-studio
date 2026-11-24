@@ -70,12 +70,14 @@ def load_manifest(model_id: str) -> dict[str, Any] | None:
 def write_manifest(model_id: str, value: dict[str, Any]) -> None:
     if not isinstance(value, dict) or value.get("id") != model_id:
         raise ValueError("The model manifest has an invalid model identifier.")
-    content = (
-        json.dumps(normalize_manifest(value), indent=2, sort_keys=True, allow_nan=False) + "\n"
-    )
-    path = manifest_path(model_id)
+    write_json_atomic(manifest_path(model_id), normalize_manifest(value))
+
+
+def write_json_atomic(path: Path, value: Any) -> None:
+    content = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(prefix=".manifest-", suffix=".tmp", dir=path.parent)
+    prefix = f".{path.stem}-"
+    descriptor, name = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=path.parent)
     temporary = Path(name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:

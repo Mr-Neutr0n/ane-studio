@@ -11,13 +11,14 @@ from ane_studio_worker import huggingface as hub
 REVISION = "a" * 40
 
 
-def mock_hub(monkeypatch, tmp_path: Path, config=None, revision=REVISION):
+def mock_hub(monkeypatch, tmp_path: Path, config=None, revision=REVISION, model_id="org/model"):
     path = tmp_path / "config.json"
     path.write_text(
         json.dumps(config if config is not None else {"architectures": ["Lfm2ForCausalLM"]})
     )
     calls = []
     info = SimpleNamespace(
+        id=model_id,
         sha=revision,
         safetensors=SimpleNamespace(total=123),
         card_data=None,
@@ -117,7 +118,8 @@ def test_download_is_pinned_and_does_not_fetch_executable_weights(
     calls = []
     monkeypatch.setattr(hub, "snapshot_download", lambda **kwargs: calls.append(kwargs))
     destination = tmp_path / "source"
-    assert hub.download_model("org/model", destination, REVISION) == destination
+    staged = hub.download_model("org/model", destination, REVISION)
+    assert staged == calls[0]["local_dir"] == tmp_path / "source.partial"
     assert calls[0]["revision"] == REVISION
     assert calls[0]["token"] is False
     assert "*.safetensors" in calls[0]["allow_patterns"]
@@ -150,3 +152,66 @@ def test_bad_identifier_is_rejected_before_network(monkeypatch) -> None:
     monkeypatch.setattr(hub, "HfApi", unexpected)
     with pytest.raises(ValueError):
         hub.inspect_model("org/../model")
+
+
+def test_inspection_returns_canonical_hub_id(monkeypatch, tmp_path: Path) -> None:
+    calls, _ = mock_hub(monkeypatch, tmp_path, model_id="Org/Model")
+    assert hub.inspect_model("org/model")["id"] == "Org/Model"
+    assert calls[2][1]["model_id"] == "Org/Model"
+
+
+def test_inspection_keeps_requested_id_when_hub_id_is_invalid(monkeypatch, tmp_path: Path) -> None:
+    mock_hub(monkeypatch, tmp_path, model_id="not a model id")
+    assert hub.inspect_model("org/model")["id"] == "org/model"
+
+
+def fake_snapshot(monkeypatch, files):
+    calls = []
+
+    def download(**kwargs):
+        calls.append(kwargs)
+        for name in files:
+            (kwargs["local_dir"] / name).write_text(kwargs["revision"])
+
+    monkeypatch.setattr(hub, "snapshot_download", download)
+    return calls
+
+
+def test_same_revision_downloads_in_place(monkeypatch, tmp_path: Path) -> None:
+    destination = tmp_path / "source"
+    fake_snapshot(monkeypatch, ["config.json"])
+    hub.replace_source(hub.download_model("org/model", destination, REVISION), destination)
+    calls = fake_snapshot(monkeypatch, ["config.json"])
+    assert hub.download_model("org/model", destination, REVISION) == destination
+    assert calls[0]["local_dir"] == destination
+
+
+def test_new_revision_replaces_stale_source_files(monkeypatch, tmp_path: Path) -> None:
+    destination = tmp_path / "source"
+    fake_snapshot(monkeypatch, ["config.json", "chat_template.jinja"])
+    hub.replace_source(hub.download_model("org/model", destination, REVISION), destination)
+    newer = "b" * 40
+    fake_snapshot(monkeypatch, ["config.json"])
+    staged = hub.download_model("org/model", destination, newer)
+    # The old source stays intact until the new revision is complete.
+    assert (destination / "chat_template.jinja").read_text() == REVISION
+    hub.replace_source(staged, destination)
+    assert sorted(path.name for path in destination.iterdir()) == [
+        hub.REVISION_MARKER,
+        "config.json",
+    ]
+    assert (destination / "config.json").read_text() == newer
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["source"]
+
+
+def test_interrupted_staging_resumes_only_for_its_revision(monkeypatch, tmp_path: Path) -> None:
+    destination = tmp_path / "source"
+    staging = tmp_path / "source.partial"
+    staging.mkdir()
+    (staging / hub.REVISION_MARKER).write_text(REVISION)
+    (staging / "model.safetensors").write_text("partial")
+    fake_snapshot(monkeypatch, [])
+    hub.download_model("org/model", destination, REVISION)
+    assert (staging / "model.safetensors").exists()
+    hub.download_model("org/model", destination, "b" * 40)
+    assert not (staging / "model.safetensors").exists()

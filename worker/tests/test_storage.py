@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -59,14 +60,29 @@ def test_failed_manifest_serialization_keeps_old_record() -> None:
     assert storage.load_manifest("org/model") == record
 
 
-def test_fixed_temporary_symlink_cannot_overwrite_external_file(tmp_path: Path) -> None:
+def test_planted_temporary_symlink_cannot_overwrite_external_file(
+    monkeypatch, tmp_path: Path
+) -> None:
     target = tmp_path / "outside"
     target.write_text("keep")
     directory = storage.model_directory("org/model")
     directory.mkdir(parents=True)
-    (directory / "manifest.tmp").symlink_to(target)
+    # Force mkstemp to try the planted name first. Exclusive creation must skip it.
+    (directory / ".manifest-planted.tmp").symlink_to(target)
+    monkeypatch.setattr(tempfile, "_get_candidate_names", lambda: iter(["planted", "fresh"]))
     storage.write_manifest("org/model", {"id": "org/model"})
     assert target.read_text() == "keep"
+    assert (directory / ".manifest-planted.tmp").is_symlink()
+    assert storage.load_manifest("org/model") == {"id": "org/model"}
+
+
+def test_json_results_are_replaced_atomically(tmp_path: Path) -> None:
+    path = tmp_path / "results" / "benchmark.json"
+    storage.write_json_atomic(path, {"policies": []})
+    with pytest.raises(ValueError):
+        storage.write_json_atomic(path, {"policies": [float("nan")]})
+    assert json.loads(path.read_text()) == {"policies": []}
+    assert [item.name for item in path.parent.iterdir()] == ["benchmark.json"]
 
 
 @pytest.mark.parametrize("level", ["models", "model", "manifest"])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import weakref
@@ -191,6 +192,7 @@ class NonRoundTripTokenizer:
     pad_token_id = 0
     eos_token_id = 9
     bos_token_id = None
+    chat_template = "{{ messages }}"
 
     def __init__(self, ids):
         self.ids = ids
@@ -331,3 +333,96 @@ def test_qwen_uses_fp32_to_preserve_position_zero_parity() -> None:
     assert coreml_backend._compute_precision("LlamaForCausalLM", fake_ct) == {
         "op_selector": coreml_backend._fp16_matrix_operation
     }
+
+
+class TemplateTokenizer:
+    eos_token_id = 2
+
+    def __init__(self, chat_template, error=None):
+        self.chat_template = chat_template
+        self.error = error
+
+    def apply_chat_template(self, messages, **kwargs):
+        if self.error:
+            raise self.error
+        return "<template>"
+
+
+def test_plain_prompt_is_used_only_without_chat_template() -> None:
+    messages = [{"role": "user", "content": "hi"}]
+    assert coreml_backend._prompt_text(TemplateTokenizer(None), messages, {}) == (
+        "User: hi\nAssistant:"
+    )
+    assert coreml_backend._prompt_text(TemplateTokenizer("t"), messages, {}) == "<template>"
+    with pytest.raises(TypeError, match="template bug"):
+        coreml_backend._prompt_text(TemplateTokenizer("t", TypeError("template bug")), messages, {})
+
+
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        ({"eos_token_id": [151645, 151643]}, {2, 151645, 151643}),
+        ({"eos_token_id": 7}, {2, 7}),
+        ({"eos_token_id": [True, -1, "3", 4]}, {2, 4}),
+        ({}, {2}),
+        ([], {2}),
+    ],
+)
+def test_eos_ids_include_generation_config(tmp_path: Path, config, expected) -> None:
+    (tmp_path / "generation_config.json").write_text(json.dumps(config))
+    assert coreml_backend._eos_token_ids(TemplateTokenizer(None), tmp_path) == expected
+
+
+def test_eos_ids_without_generation_config(tmp_path: Path) -> None:
+    assert coreml_backend._eos_token_ids(TemplateTokenizer(None), tmp_path) == {2}
+
+
+def test_generation_stops_on_any_eos_id(np) -> None:
+    runtime = coreml_backend.CoreMLRuntime.__new__(coreml_backend.CoreMLRuntime)
+    runtime.np = np
+    runtime.sequence_length = 8
+    runtime.tokenizer = NonRoundTripTokenizer([1])
+    runtime.eos_token_ids = frozenset({9, 5})
+    logits = np.zeros((1, 10))
+    logits[0, 5] = 1
+    runtime.model = SimpleNamespace(predict=lambda _: {"logits": logits})
+    result = runtime.generate([{"role": "user", "content": "hello"}], 3, 0)
+    assert result["tokens"] == 0
+    assert result["stopReason"] == "eos"
+
+
+def test_sampling_is_not_reseeded_for_each_generation(np) -> None:
+    runtime = coreml_backend.CoreMLRuntime.__new__(coreml_backend.CoreMLRuntime)
+    runtime.np = np
+    runtime.sequence_length = 16
+    runtime.tokenizer = NonRoundTripTokenizer([10])
+    runtime.eos_token_ids = frozenset({-1})
+    seen = []
+
+    def predict(feed):
+        seen.append(int(feed["input_ids"][0][int(feed["position"][0])]))
+        return {"logits": np.ones((1, 1000))}
+
+    runtime.model = SimpleNamespace(predict=predict)
+    messages = [{"role": "user", "content": "hello"}]
+    first = runtime.generate(messages, 6, 1.0)
+    second = runtime.generate(messages, 6, 1.0)
+    # Six uniform draws from 1,000 tokens repeat by chance with probability 1e-18.
+    assert seen[1:6] != seen[7:12]
+    assert first["tokens"] == second["tokens"] == 6
+    greedy = [runtime.generate(messages, 3, 0)["text"] for _ in range(2)]
+    assert greedy[0] == greedy[1]
+
+
+def test_benchmark_rejects_oversized_prompt_before_loading_policies(monkeypatch) -> None:
+    tokenizer = NonRoundTripTokenizer(list(range(8)))
+    monkeypatch.setattr(coreml_backend, "_load_tokenizer", lambda source: (tokenizer, {}))
+
+    def unexpected(*args):
+        pytest.fail("no policy may load for an oversized prompt")
+
+    monkeypatch.setattr(coreml_backend, "CoreMLRuntime", unexpected)
+    with pytest.raises(ValueError, match="benchmark prompt uses 8 tokens.*8-token context"):
+        coreml_backend.benchmark(
+            Path("model.mlpackage"), Path("source"), 8, "org/model", "hello", ["cpuOnly", "all"]
+        )

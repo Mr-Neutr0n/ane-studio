@@ -222,6 +222,8 @@ def convert_model(
     sequence_length: int,
     request_id: str,
     write: EventWriter,
+    *,
+    before_save: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     ct, np, torch, auto = _imports()
     AutoModelForCausalLM, AutoTokenizer = auto
@@ -343,6 +345,8 @@ def convert_model(
             compute_precision=_compute_precision(architecture, ct),
             skip_model_load=True,
         )
+        if before_save is not None:
+            before_save()
         shutil.rmtree(output, ignore_errors=True)
         converted.save(output)
     del converted, traced, wrapper, model, adapted
@@ -424,41 +428,80 @@ def _load_compiled_model(package: Path, compute_units: Any, ct: Any) -> Any:
     return model
 
 
+def _load_tokenizer(source: Path) -> tuple[Any, dict[str, Any]]:
+    _, _, _, auto = _imports()
+    _, AutoTokenizer = auto
+    config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    if config.get("model_type") == "lfm3":
+        from .vendor.lfm3 import register
+
+        register()
+    options = {"enable_thinking": False} if config.get("model_type") == "lfm3" else {}
+    tokenizer = AutoTokenizer.from_pretrained(
+        source, local_files_only=True, trust_remote_code=False
+    )
+    tokenizer.padding_side = "right"
+    return tokenizer, options
+
+
+def _prompt_text(tokenizer: Any, messages: list[dict[str, str]], options: dict[str, Any]) -> str:
+    # Only a tokenizer without a template uses the plain fallback. A broken
+    # template is an error, not a reason to invent another prompt format.
+    if not getattr(tokenizer, "chat_template", None):
+        lines = [f"{message['role'].title()}: {message['content']}" for message in messages]
+        return "\n".join(lines) + "\nAssistant:"
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, **options
+    )
+
+
+def _prompt_token_ids(
+    tokenizer: Any, messages: list[dict[str, str]], options: dict[str, Any]
+) -> list[int]:
+    text = _prompt_text(tokenizer, messages, options)
+    return list(tokenizer(text, add_special_tokens=False)["input_ids"])
+
+
+def _valid_token_id(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _eos_token_ids(tokenizer: Any, source: Path | None = None) -> frozenset[int]:
+    # Chat checkpoints often end a turn with a token other than tokenizer.eos,
+    # listed in generation_config.json, for example Qwen2.5's <|im_end|>.
+    ids = {tokenizer.eos_token_id} if _valid_token_id(tokenizer.eos_token_id) else set()
+    path = source / "generation_config.json" if source is not None else None
+    if (
+        path is not None
+        and path.is_file()
+        and not path.is_symlink()
+        and path.stat().st_size <= 1_048_576
+    ):
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, RecursionError):
+            config = None
+        value = config.get("eos_token_id") if isinstance(config, dict) else None
+        values = value if isinstance(value, list) else [value]
+        ids.update(item for item in values if _valid_token_id(item))
+    return frozenset(ids)
+
+
 class CoreMLRuntime:
     def __init__(self, package: Path, source: Path, sequence_length: int, policy: str) -> None:
-        ct, np, _, auto = _imports()
-        _, AutoTokenizer = auto
+        ct, np, _, _ = _imports()
         self.ct = ct
         self.np = np
         self.sequence_length = sequence_length
-        config = json.loads((source / "config.json").read_text(encoding="utf-8"))
-        if config.get("model_type") == "lfm3":
-            from .vendor.lfm3 import register
-
-            register()
-        self.chat_template_options = (
-            {"enable_thinking": False} if config.get("model_type") == "lfm3" else {}
-        )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            source, local_files_only=True, trust_remote_code=False
-        )
-        self.tokenizer.padding_side = "right"
+        self.tokenizer, self.chat_template_options = _load_tokenizer(source)
+        self.eos_token_ids = _eos_token_ids(self.tokenizer, source)
         unit_name = POLICIES.get(policy)
         if not unit_name:
             raise ValueError(f"Unknown compute policy: {policy}")
         self.model = _load_compiled_model(package, getattr(ct.ComputeUnit, unit_name), ct)
 
     def prompt_text(self, messages: list[dict[str, str]]) -> str:
-        try:
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                **getattr(self, "chat_template_options", {}),
-            )
-        except (ValueError, TypeError, AttributeError):
-            lines = [f"{message['role'].title()}: {message['content']}" for message in messages]
-            return "\n".join(lines) + "\nAssistant:"
+        return _prompt_text(self.tokenizer, messages, getattr(self, "chat_template_options", {}))
 
     def generate(
         self,
@@ -467,9 +510,9 @@ class CoreMLRuntime:
         temperature: float,
         on_token: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        text = self.prompt_text(messages)
-        encoded = self.tokenizer(text, add_special_tokens=False)["input_ids"]
-        ids = list(encoded)
+        ids = _prompt_token_ids(
+            self.tokenizer, messages, getattr(self, "chat_template_options", {})
+        )
         if len(ids) >= self.sequence_length:
             raise ValueError(
                 f"The chat prompt uses {len(ids)} tokens, but this fixed graph has a "
@@ -477,8 +520,9 @@ class CoreMLRuntime:
             )
         generated: list[int] = []
         durations: list[float] = []
-        eos = self.tokenizer.eos_token_id
-        rng = self.np.random.default_rng(941731)
+        eos = getattr(self, "eos_token_ids", None) or _eos_token_ids(self.tokenizer)
+        # Sampling draws fresh entropy per call. Temperature 0 stays greedy.
+        rng = self.np.random.default_rng()
         capacity = self.sequence_length - len(ids)
         stop_reason = "contextLimit" if capacity < max_new_tokens else "maxTokens"
         for _ in range(min(max_new_tokens, capacity)):
@@ -506,7 +550,7 @@ class CoreMLRuntime:
                 probabilities = self.np.exp(scaled)
                 probabilities /= probabilities.sum()
                 token_id = int(rng.choice(len(probabilities), p=probabilities))
-            if eos is not None and token_id == eos:
+            if token_id in eos:
                 stop_reason = "eos"
                 break
             ids.append(token_id)
@@ -597,6 +641,15 @@ def benchmark(
 ) -> dict[str, Any]:
     reports = []
     messages = [{"role": "user", "content": prompt}]
+    # Reject an oversized prompt once, before each policy compiles and loads the model.
+    tokenizer, options = _load_tokenizer(source)
+    length = len(_prompt_token_ids(tokenizer, messages, options))
+    del tokenizer
+    if length >= sequence_length:
+        raise ValueError(
+            f"The benchmark prompt uses {length} tokens, but this fixed graph has a "
+            f"{sequence_length}-token context. Shorten the prompt."
+        )
     for policy in policies:
         runtime = None
         try:

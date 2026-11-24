@@ -355,9 +355,11 @@ function App(): React.JSX.Element {
       }>("inspect", { modelId: id });
       if (!inspected.supported)
         throw new Error(inspected.reason || "This architecture is not supported yet.");
-      if (!bootstrap?.models.some((model) => model.id === id)) {
+      // The worker stores models under the Hub's canonical ID, not the typed spelling.
+      const canonicalId = inspected.id;
+      if (!bootstrap?.models.some((model) => model.id === canonicalId)) {
         updateModel({
-          id,
+          id: canonicalId,
           slug: "",
           state: "available",
           architecture: inspected.architecture,
@@ -367,7 +369,7 @@ function App(): React.JSX.Element {
           updatedAt: new Date().toISOString(),
         });
       }
-      setSelectedId(id);
+      setSelectedId(canonicalId);
       setGeneration(undefined);
       setMessages([]);
       setPrompt("");

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -169,9 +170,9 @@ def test_cached_runtime_rechecks_missing_artifact(monkeypatch) -> None:
     monkeypatch.setattr(service, "CoreMLRuntime", lambda *args: object())
     worker = Service(lambda value: None)
     worker._runtime("org/model", "cpuOnly")
-    service.remove_model("org/model")
-    assert not package.exists()
-    with pytest.raises(ValueError, match="parity"):
+    shutil.rmtree(package)
+    assert service.load_manifest("org/model")["state"] == "ready"
+    with pytest.raises(ValueError, match="artifacts are missing"):
         worker._runtime("org/model", "cpuOnly")
 
 
@@ -216,6 +217,7 @@ def mock_prepare(monkeypatch, parity):
         service,
         "inspect_model",
         lambda model_id: {
+            "id": model_id,
             "supported": True,
             "architecture": "Lfm2ForCausalLM",
             "parameterCount": 1,
@@ -227,8 +229,10 @@ def mock_prepare(monkeypatch, parity):
     def download(model_id, source, revision):
         source.mkdir(parents=True, exist_ok=True)
         (source / "config.json").write_text("{}")
+        return source
 
-    def convert(model_id, source, package, *args):
+    def convert(model_id, source, package, *args, before_save=None):
+        before_save()
         package.mkdir(parents=True, exist_ok=True)
         (package / "Manifest.json").write_text("converted")
         return {"parity": parity}
@@ -264,11 +268,12 @@ def test_prepare_succeeds_only_with_numeric_parity(monkeypatch) -> None:
     assert worker._paths("org/model")[0]["parity"]["cosineSimilarity"] == 0.999
 
 
-def test_failed_reprepare_evicts_cache_and_records_error(monkeypatch) -> None:
-    ready_model()
+def test_failed_reprepare_before_save_keeps_ready_model(monkeypatch) -> None:
+    record, _, _ = ready_model()
     mock_prepare(monkeypatch, passed_parity())
     monkeypatch.setattr(service, "CoreMLRuntime", lambda *args: object())
-    worker = Service(lambda value: None)
+    events = []
+    worker = Service(events.append)
     worker._runtime("org/model", "cpuOnly")
 
     def fail(*args):
@@ -278,9 +283,96 @@ def test_failed_reprepare_evicts_cache_and_records_error(monkeypatch) -> None:
     with pytest.raises(OSError, match="interrupted"):
         worker.prepare("request", {"modelId": "org/model"})
     assert not worker.runtimes
+    assert service.load_manifest("org/model") == record
+    assert events[-1]["kind"] == "model"
+    assert events[-1]["model"] == record
+    assert worker._runtime("org/model", "cpuOnly") is not None
+
+
+def test_reprepare_keeps_ready_manifest_on_disk_until_save(monkeypatch) -> None:
+    record, _, _ = ready_model()
+    mock_prepare(monkeypatch, passed_parity())
+    states = []
+
+    def convert(model_id, source, package, *args, before_save=None):
+        states.append(service.load_manifest(model_id)["state"])
+        before_save()
+        states.append(service.load_manifest(model_id)["state"])
+        raise RuntimeError("save failed")
+
+    monkeypatch.setattr(service, "convert_model", convert)
+    with pytest.raises(RuntimeError, match="save failed"):
+        Service(lambda value: None).prepare("request", {"modelId": "org/model"})
+    assert states == ["ready", "converting"]
     assert service.load_manifest("org/model")["state"] == "failed"
-    with pytest.raises(ValueError, match="parity"):
-        worker._runtime("org/model", "cpuOnly")
+
+
+def test_prepare_records_new_revision_before_replacing_source(monkeypatch) -> None:
+    ready_model()
+    mock_prepare(monkeypatch, passed_parity())
+    calls = []
+
+    def download(model_id, source, revision):
+        staged = source.with_name("source.partial")
+        staged.mkdir()
+        return staged
+
+    def replace(staged, source):
+        calls.append((staged.name, source.name, service.load_manifest("org/model")["state"]))
+
+    monkeypatch.setattr(service, "download_model", download)
+    monkeypatch.setattr(service, "replace_source", replace)
+    Service(lambda value: None).prepare("request", {"modelId": "org/model"})
+    assert calls == [("source.partial", "source", "converting")]
+
+
+def test_prepare_stores_model_under_canonical_hub_id(monkeypatch) -> None:
+    mock_prepare(monkeypatch, passed_parity())
+    inspect = service.inspect_model
+    monkeypatch.setattr(
+        service, "inspect_model", lambda model_id: {**inspect(model_id), "id": "Org/Model"}
+    )
+    record = Service(lambda value: None).prepare("request", {"modelId": "org/model"})
+    assert record["id"] == "Org/Model"
+    assert service.load_manifest("Org/Model")["state"] == "ready"
+    assert service.load_manifest("org/model") is None
+
+
+def test_prepare_removes_stale_compile_scratch(monkeypatch) -> None:
+    mock_prepare(monkeypatch, passed_parity())
+    stale = [
+        service.model_path(model_id, "artifacts", ".ane-studio-compile-old")
+        for model_id in ("org/model", "org/other")
+    ]
+    for path in stale:
+        path.mkdir(parents=True)
+        (path / "weights.bin").write_bytes(b"scratch")
+    Service(lambda value: None).prepare("request", {"modelId": "org/model"})
+    assert not any(path.exists() for path in stale)
+    assert service.model_path("org/model", "artifacts", "model.mlpackage").is_dir()
+
+
+def test_placement_releases_loaded_runtime_first(monkeypatch) -> None:
+    ready_model()
+    worker = Service(lambda value: None)
+    worker.runtimes[("org/model", "cpuOnly", "digest", 64)] = object()
+
+    def plan(package, policy):
+        assert not worker.runtimes
+        return {"evidence": "planned", "policy": policy}
+
+    monkeypatch.setattr(service, "planned_placement", plan)
+    assert worker.placement("request", {"modelId": "org/model", "policy": "all"})["policy"] == "all"
+
+
+def test_benchmark_result_is_written_atomically(monkeypatch) -> None:
+    ready_model()
+    monkeypatch.setattr(service, "benchmark", lambda *args: {"policies": []})
+    written = []
+    monkeypatch.setattr(service, "write_json_atomic", lambda path, value: written.append(path))
+    Service(lambda value: None).run_benchmark("request", {"modelId": "org/model"})
+    assert written[0].parent == service.model_path("org/model", "results")
+    assert written[0].name.startswith("benchmark-")
 
 
 @pytest.mark.parametrize(
@@ -365,6 +457,7 @@ def test_prepare_events_omit_unknown_parameter_count(monkeypatch) -> None:
         service,
         "inspect_model",
         lambda model_id: {
+            "id": model_id,
             "supported": True,
             "architecture": "Lfm2ForCausalLM",
             "parameterCount": None,
