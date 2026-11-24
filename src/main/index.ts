@@ -13,7 +13,7 @@ import {
   type WorkerEvent,
 } from "../shared/contracts";
 import { CredentialStore } from "./credentials";
-import { WorkerClient } from "./worker";
+import { removeStaleWorkerDirectories, WorkerClient } from "./worker";
 
 app.setName("ANE Studio");
 // Keep existing installations and exported worker commands on the same data directory.
@@ -341,6 +341,8 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       credentials = new CredentialStore(join(app.getPath("userData"), "credentials", "hf-token"));
+      // The single-instance lock is held and no worker has started yet.
+      await removeStaleWorkerDirectories(app.getPath("userData")).catch(() => undefined);
       registerIpc();
       await createWindow();
       app.on("activate", () => {

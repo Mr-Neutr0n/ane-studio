@@ -47,6 +47,7 @@ const state = vi.hoisted(() => ({
   hasToken: vi.fn<() => Promise<boolean>>(),
   saveToken: vi.fn<(token: string) => Promise<void>>(),
   deleteToken: vi.fn<() => Promise<void>>(),
+  removeStale: vi.fn<(directory: string) => Promise<void>>(),
 }));
 vi.mock("@electron-toolkit/utils", () => ({
   is: {
@@ -56,6 +57,7 @@ vi.mock("@electron-toolkit/utils", () => ({
   },
 }));
 vi.mock("../src/main/worker", () => ({
+  removeStaleWorkerDirectories: state.removeStale,
   WorkerClient: class {
     constructor(options: WorkerOptions) {
       state.workerOptions.push(options);
@@ -191,6 +193,7 @@ beforeEach(() => {
   state.saveToken.mockResolvedValue(undefined);
   state.deleteToken.mockResolvedValue(undefined);
   state.stop.mockResolvedValue(undefined);
+  state.removeStale.mockResolvedValue(undefined);
   state.request.mockImplementation(async (command) =>
     command === "catalog" ? { curatedModels: [], models: [] } : {},
   );
@@ -209,6 +212,20 @@ describe("Electron process and renderer security", () => {
     expect(state.windows).toHaveLength(0);
     expect(state.handlers.size).toBe(0);
     expect(state.workerOptions).toHaveLength(0);
+    expect(state.removeStale).not.toHaveBeenCalled();
+  });
+
+  it("removes stale worker temporary directories before opening a window", async () => {
+    let windowsAtCleanup = -1;
+    state.removeStale.mockImplementationOnce(async () => {
+      windowsAtCleanup = state.windows.length;
+      throw new Error("cleanup failed");
+    });
+    await start();
+    expect(state.removeStale).toHaveBeenCalledExactlyOnceWith("/test/appData/ANE Studio");
+    expect(windowsAtCleanup).toBe(0);
+    // A failed cleanup must not stop the app from opening.
+    expect(state.windows).toHaveLength(1);
   });
 
   it("restores and focuses the existing window for a duplicate Finder launch", async () => {

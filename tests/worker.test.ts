@@ -2,17 +2,18 @@
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WorkerClient } from "../src/main/worker";
+import { removeStaleWorkerDirectories, WorkerClient } from "../src/main/worker";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   mkdirSync: vi.fn(),
   mkdtempSync: vi.fn(),
   rm: vi.fn(),
+  readdir: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("node:fs", () => ({ mkdirSync: mocks.mkdirSync, mkdtempSync: mocks.mkdtempSync }));
-vi.mock("node:fs/promises", () => ({ rm: mocks.rm }));
+vi.mock("node:fs/promises", () => ({ rm: mocks.rm, readdir: mocks.readdir }));
 
 class FakeChild extends EventEmitter {
   pid: number;
@@ -381,5 +382,31 @@ describe("WorkerClient", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect((await settled).every((result) => result.status === "rejected")).toBe(true);
     await ready(value);
+  });
+});
+
+describe("stale worker directory cleanup", () => {
+  const entry = (name: string, directory: boolean) => ({ name, isDirectory: () => directory });
+
+  it("removes only worker temporary directories, never links or other data", async () => {
+    mocks.readdir.mockResolvedValueOnce([
+      entry(".worker-tmp-abc", true),
+      entry(".worker-tmp-link", false),
+      entry("models", true),
+      entry("credentials", true),
+    ]);
+    mocks.rm.mockResolvedValue(undefined);
+    await removeStaleWorkerDirectories("/tmp/ane-worker-test");
+    expect(mocks.readdir).toHaveBeenCalledWith("/tmp/ane-worker-test", { withFileTypes: true });
+    expect(mocks.rm).toHaveBeenCalledExactlyOnceWith("/tmp/ane-worker-test/.worker-tmp-abc", {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("ignores a missing data directory", async () => {
+    mocks.readdir.mockRejectedValueOnce(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    await expect(removeStaleWorkerDirectories("/tmp/missing")).resolves.toBeUndefined();
+    expect(mocks.rm).not.toHaveBeenCalled();
   });
 });

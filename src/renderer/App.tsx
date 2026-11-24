@@ -38,7 +38,7 @@ import type {
   PlacementSummary,
   WorkerEvent,
 } from "../shared/contracts";
-import { hasPassedParity } from "../shared/contracts";
+import { hasPassedParity, normalizeModelId } from "../shared/contracts";
 
 type View = "chat" | "tests" | "details";
 type Operation = "prepare" | "inspect" | "chat" | "benchmark" | "remove";
@@ -337,9 +337,12 @@ function App(): React.JSX.Element {
 
   async function addCustomModel(): Promise<void> {
     if (busy) return;
-    const id = customId.trim();
-    if (id.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-      setError("Enter a Hugging Face model ID such as organization/model.");
+    let id: string;
+    try {
+      // Use the same rule as preload and main so the form cannot accept an ID they reject.
+      id = normalizeModelId(customId);
+    } catch (reason) {
+      setError(errorMessage(reason));
       return;
     }
     if (!beginOperation("inspect")) return;
