@@ -215,17 +215,21 @@ describe("Electron process and renderer security", () => {
     expect(state.removeStale).not.toHaveBeenCalled();
   });
 
-  it("removes stale worker temporary directories before opening a window", async () => {
-    let windowsAtCleanup = -1;
-    state.removeStale.mockImplementationOnce(async () => {
-      windowsAtCleanup = state.windows.length;
-      throw new Error("cleanup failed");
-    });
+  it("sweeps stale worker directories without delaying the window or racing a worker", async () => {
+    const cleanup = deferred<void>();
+    state.removeStale.mockReturnValueOnce(cleanup.promise);
     await start();
     expect(state.removeStale).toHaveBeenCalledExactlyOnceWith("/test/appData/ANE Studio");
-    expect(windowsAtCleanup).toBe(0);
-    // A failed cleanup must not stop the app from opening.
+    // The window and IPC exist while the sweep is still running.
     expect(state.windows).toHaveLength(1);
+    const bootstrap = invoke("studio:bootstrap");
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    expect(state.readToken).not.toHaveBeenCalled();
+    expect(state.workerOptions).toHaveLength(0);
+    // A failed sweep must not block the worker.
+    cleanup.reject(new Error("cleanup failed"));
+    await bootstrap;
+    expect(state.workerOptions).toHaveLength(1);
   });
 
   it("restores and focuses the existing window for a duplicate Finder launch", async () => {

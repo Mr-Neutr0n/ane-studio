@@ -26,6 +26,8 @@ let credentials: CredentialStore;
 let controlQueue: Promise<unknown> = Promise.resolve();
 let queuedControls = 0;
 let quitting = false;
+// Workers wait for this sweep so it can never delete a new worker's directory.
+let staleWorkerCleanup: Promise<void> = Promise.resolve();
 let shutdownComplete = false;
 
 function publicError(error: unknown): string {
@@ -67,6 +69,7 @@ function sendEvent(event: WorkerEvent): void {
 // Call only under control() so an async credential read cannot create duplicate workers.
 async function createWorker(): Promise<WorkerClient> {
   if (worker) return worker;
+  await staleWorkerCleanup;
   const token = await credentials.readToken();
   if (quitting) throw new Error("ANE Studio is shutting down.");
   worker = new WorkerClient({
@@ -341,8 +344,11 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       credentials = new CredentialStore(join(app.getPath("userData"), "credentials", "hf-token"));
-      // The single-instance lock is held and no worker has started yet.
-      await removeStaleWorkerDirectories(app.getPath("userData")).catch(() => undefined);
+      // The single-instance lock is held and no worker has started yet. Do not delay the
+      // window: a second launch during a long sweep would otherwise race the startup.
+      staleWorkerCleanup = removeStaleWorkerDirectories(app.getPath("userData")).catch(
+        () => undefined,
+      );
       registerIpc();
       await createWindow();
       app.on("activate", () => {

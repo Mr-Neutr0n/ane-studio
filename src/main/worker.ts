@@ -46,9 +46,10 @@ export async function removeStaleWorkerDirectories(dataDirectory: string): Promi
   } catch {
     return;
   }
-  await Promise.all(
+  // Settle every removal, so a fast failure cannot return while a large one still runs.
+  await Promise.allSettled(
     entries
-      // Dirent types come from lstat, so a planted symlink is never followed.
+      // A symlink's Dirent is never a directory, so a planted link is never followed.
       .filter((entry) => entry.isDirectory() && entry.name.startsWith(TEMPORARY_DIRECTORY_PREFIX))
       .map((entry) => rm(join(dataDirectory, entry.name), { recursive: true, force: true })),
   );
