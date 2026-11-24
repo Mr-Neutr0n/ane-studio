@@ -9,23 +9,23 @@ dependencies = [
 
 [project.optional-dependencies]
 coreml = [
-    "accelerate==1.14.0",
+    "accelerate==1.16.0",
     "coremltools==9.0",
-    "numpy==2.2.6",
+    "numpy==2.5.5",
     "safetensors==0.8.0",
-    "torch==2.7.0",
+    "torch==2.15.0",
     "transformers==5.16.1",
 ]
 test = [
-    "pytest==9.0.2",
-    "ruff==0.16.5",
+    "pytest==9.2.0",
+    "ruff==0.17.6",
 ]
 
 [project.scripts]
 ane-studio-worker = "ane_studio_worker.cli:main"
 
 [build-system]
-requires = ["hatchling==1.27.0"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
