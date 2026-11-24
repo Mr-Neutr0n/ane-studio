@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
 const tag = `v${pkg.version}`;
 const repository = process.env.GITHUB_REPOSITORY;
+const checkOnly = process.argv.includes("--check");
 if (
   process.env.GITHUB_REF !== `refs/tags/${tag}` ||
   !repository ||
@@ -19,12 +20,27 @@ async function run(args: string[]) {
   ]);
   return { code, output, error };
 }
-const existing = await run(["gh", "api", `repos/${repository}/releases/tags/${tag}`, "--silent"]);
-if (existing.code === 0) {
+// The releases/tags endpoint omits drafts, so list every release, drafts included.
+const existing = await run([
+  "gh",
+  "api",
+  "--paginate",
+  `repos/${repository}/releases`,
+  "--jq",
+  `.[] | select(.tag_name == "${tag}") | .id`,
+]);
+if (existing.code !== 0)
+  throw new Error("Cannot check the existing release. No release was changed.");
+if (existing.output.trim()) {
+  if (checkOnly) {
+    throw new Error(
+      `Release ${tag} already exists, possibly as a draft. Delete it before rebuilding.`,
+    );
+  }
   console.log(`Release ${tag} already exists. Its assets were left unchanged.`);
+} else if (checkOnly) {
+  console.log(`No release exists for ${tag}.`);
 } else {
-  if (!existing.error.includes("HTTP 404"))
-    throw new Error("Cannot check the existing release. No release was changed.");
   const result = await run([
     "gh",
     "release",
