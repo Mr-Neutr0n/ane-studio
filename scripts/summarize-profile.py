@@ -79,16 +79,17 @@ def summarize(signposts: Path, ane: Path, workload: dict) -> dict:
         )
         if "prediction" in row.get("event-label:formatted", "").lower()
     ]
-    overlaps = []
+    # One ANE interval can overlap two generations. Count it once in the total.
+    overlapping = set()
     per_generation = []
     for start, end in intervals:
         matched = [
-            row
-            for row in predictions
+            index
+            for index, row in enumerate(predictions)
             if int(row["start"]) < end
             and int(row["start"]) + int(row["duration"]) > start
         ]
-        overlaps.extend(matched)
+        overlapping.update(matched)
         per_generation.append(len(matched))
     return {
         "modelId": workload["modelId"],
@@ -100,7 +101,7 @@ def summarize(signposts: Path, ane: Path, workload: dict) -> dict:
             len(item["samples"]) for item in workload["generations"]
         ),
         "anePredictionIntervalsInTrace": len(predictions),
-        "anePredictionIntervalsOverlappingGeneration": len(overlaps),
+        "anePredictionIntervalsOverlappingGeneration": len(overlapping),
         "anePredictionsPerGeneration": per_generation,
         "aneObservedDuringEveryGeneration": all(per_generation),
         "note": "ANE hardware intervals are system-wide. Compare the same model's CPU-only control.",
@@ -113,7 +114,12 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
     workload = json.loads(args.workload.read_text())
-    if Path(workload["tracePath"]).resolve() != args.trace.resolve():
+    trace_path = workload.get("tracePath")
+    if not isinstance(trace_path, str) or not trace_path:
+        raise ValueError(
+            "The workload has no trace. Run profile-model.py with --trace first."
+        )
+    if Path(trace_path).resolve() != args.trace.resolve():
         raise ValueError("Trace path does not match the worker workload")
     # Both lanes come from this one trace, never caller-supplied XML from different runs.
     paths = {}
