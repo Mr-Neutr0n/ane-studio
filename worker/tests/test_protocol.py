@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -49,6 +52,8 @@ def test_process_rejects_bad_request_ids(monkeypatch, candidate) -> None:
 def run_cli(monkeypatch, text):
     written = []
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO(text))
+    monkeypatch.setattr(cli, "_PROTOCOL", None)
+    monkeypatch.setattr(cli, "claim_protocol_stream", io.StringIO)
     monkeypatch.setattr(cli, "write", written.append)
     monkeypatch.setattr(cli, "Service", lambda write: StubService())
     cli.main()
@@ -106,3 +111,35 @@ def test_main_processes_requests_in_order(monkeypatch) -> None:
         monkeypatch, '\n{"id":"first","command":"health"}\n{"id":"second","command":"catalog"}\n'
     )
     assert [value["id"] for value in written] == ["first", "second"]
+
+
+def test_dependency_output_cannot_corrupt_protocol_stream() -> None:
+    script = textwrap.dedent(
+        """
+        import os
+        from ane_studio_worker import cli
+
+        class NoisyService:
+            def handle(self, request_id, command, payload):
+                print("python dependency output")
+                os.write(1, b"native dependency output\\n")
+                return {"command": command}
+
+        cli.Service = lambda write: NoisyService()
+        cli.main()
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        input='{"id":"one","command":"health"}\n',
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    lines = completed.stdout.splitlines()
+    assert [json.loads(line) for line in lines] == [
+        {"id": "one", "ok": True, "result": {"command": "health"}}
+    ]
+    assert "python dependency output" in completed.stderr
+    assert "native dependency output" in completed.stderr
