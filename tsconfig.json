@@ -10,16 +10,12 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "bun", "vite/client"]
+    "types": ["node", "vite/client"]
   },
   "include": [
     "src",
     "tests",
-    "scripts",
     "resources/icons",
-    "website/scripts",
-    "website/tests",
-    "website/playwright.config.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"

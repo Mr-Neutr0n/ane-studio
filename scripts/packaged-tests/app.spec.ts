@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -30,7 +31,10 @@ test("self-contained app starts with clean data and a system-only PATH", async (
   try {
     const environment = cleanEnvironment(home);
     const uvOnPath = await Promise.any(
-      (environment.PATH ?? "").split(":").map((directory) => access(join(directory, "uv"))),
+      (environment.PATH ?? "")
+        .split(":")
+        .filter(Boolean)
+        .map((directory) => access(join(directory, "uv"), constants.X_OK)),
     ).then(
       () => true,
       () => false,

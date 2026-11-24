@@ -9,10 +9,11 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package": "bun run runtime:prepare && bun run runtime:check && bun run build && electron-builder --mac dir --arm64 --publish never",
+    "package": "bun run runtime:prepare && bun run runtime:check && bun run build && electron-builder --mac dir --arm64 --publish never && bun scripts/adhoc-sign.ts",
     "test": "vitest run",
     "test:e2e": "bun run build && playwright test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
+    "typecheck:website": "tsc --noEmit -p website",
     "check": "biome check .",
     "format": "biome check --write .",
     "worker:setup": "uv sync --project worker --extra coreml --locked",
@@ -97,8 +98,7 @@
         "dir"
       ],
       "artifactName": "ANE-Studio-${version}-${arch}.${ext}",
-      "identity": "-",
-      "hardenedRuntime": false,
+      "identity": null,
       "minimumSystemVersion": "15.0",
       "icon": "resources/icons/icon.icns"
     }
