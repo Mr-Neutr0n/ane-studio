@@ -171,7 +171,7 @@ describe("published release gate", () => {
 });
 
 describe("canonical configuration", () => {
-  test("has no unconfirmed canonical and allows a controlled preview or confirmed domain", () => {
+  test("has no unconfirmed canonical and falls back to the production host or a confirmed domain", () => {
     expect(resolveSiteURL(null)).toBeNull();
     expect(resolveSiteURL(null, "ane-studio-site-example.vercel.app")).toBe(
       "https://ane-studio-site-example.vercel.app/",
