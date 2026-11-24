@@ -140,7 +140,7 @@ dist/SHA256SUMS
 
 `bun run package` builds just the app. `bun run package:test` repeats the packaged runtime and Electron startup checks. The packaged check imports Torch, Transformers, and Core ML Tools without using a developer Python environment.
 
-A version tag matching `package.json` starts the [release workflow](.github/workflows/release.yml). It runs verification and creates a draft GitHub release. A maintainer must review model evidence and publish the draft. CI does not perform networked model conversion or prove observed accelerator activity.
+A version tag matching `package.json` starts the [release workflow](.github/workflows/release.yml). It refuses to rebuild a tag that already has a release or draft, runs verification and packaging without write access, then creates a draft GitHub release in a separate job. A maintainer must review model evidence and publish the draft. CI does not perform networked model conversion or prove observed accelerator activity.
 
 ## Limits
 

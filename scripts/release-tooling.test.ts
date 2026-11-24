@@ -7,7 +7,7 @@ const directories: string[] = [];
 afterEach(async () => {
   for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true });
 });
-async function run(mode: string, ref?: string) {
+async function run(mode: string, ref?: string, args: string[] = []) {
   const directory = await mkdtemp(join(tmpdir(), "ane-release-cli-"));
   directories.push(directory);
   const executable = join(directory, "gh");
@@ -19,24 +19,34 @@ async function run(mode: string, ref?: string) {
 import {appendFileSync} from "node:fs";
 const args=process.argv.slice(2);
 appendFileSync(process.env.CALL_LOG,JSON.stringify(args)+"\\n");
-if(args[0]==="api"){if(process.env.MODE==="existing")process.exit(0);console.error(process.env.MODE==="network"?"HTTP 503":"HTTP 404");process.exit(1);}
+if(args[0]==="api"){
+  if(process.env.MODE==="network"){console.error("HTTP 503");process.exit(1);}
+  const other={id:1,tag_name:"v0.0.1",draft:false};
+  const match={id:42,tag_name:process.env.TAG,draft:process.env.MODE==="draft"};
+  const pages=process.env.MODE==="existing"||process.env.MODE==="draft"?[[other],[match]]:[[other],[{id:2,tag_name:process.env.TAG+"-rc",draft:true}]];
+  console.log(JSON.stringify(pages));process.exit(0);
+}
 if(process.env.MODE==="concurrent"){console.error("already_exists");process.exit(1);}
 console.log("draft created");
 `,
   );
   await chmod(executable, 0o755);
-  const child = Bun.spawn([process.execPath, resolve("scripts/publish-release-draft.ts")], {
-    env: {
-      ...process.env,
-      PATH: `${directory}:${process.env.PATH}`,
-      MODE: mode,
-      CALL_LOG: log,
-      GITHUB_REPOSITORY: "fixture/ane",
-      GITHUB_REF: ref ?? `refs/tags/v${version}`,
+  const child = Bun.spawn(
+    [process.execPath, resolve("scripts/publish-release-draft.ts"), ...args],
+    {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        MODE: mode,
+        TAG: `v${version}`,
+        CALL_LOG: log,
+        GITHUB_REPOSITORY: "fixture/ane",
+        GITHUB_REF: ref ?? `refs/tags/v${version}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
     },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  );
   const [code, output, error] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -51,10 +61,28 @@ console.log("draft created");
 }
 
 describe("release draft safety", () => {
-  test("leaves an existing release and assets unchanged", async () => {
+  test("fails without touching an existing published release", async () => {
     const result = await run("existing");
+    expect(result.code).not.toBe(0);
+    expect(result.error).toContain("left unchanged");
+    expect(result.calls).toHaveLength(1);
+  });
+  test("finds an existing draft on a later page of the release list", async () => {
+    const result = await run("draft");
+    expect(result.code).not.toBe(0);
+    expect(result.error).toContain("already exists");
+    expect(result.calls).toEqual([["api", "--paginate", "--slurp", "repos/fixture/ane/releases"]]);
+  });
+  test("preflight check fails when a release or draft already exists", async () => {
+    const result = await run("draft", undefined, ["--check"]);
+    expect(result.code).not.toBe(0);
+    expect(result.error).toContain("already exists");
+    expect(result.calls).toHaveLength(1);
+  });
+  test("preflight check ignores other tags and creates nothing", async () => {
+    const result = await run("missing", undefined, ["--check"]);
     expect(result.code).toBe(0);
-    expect(result.output).toContain("left unchanged");
+    expect(result.output).toContain("No release exists");
     expect(result.calls).toHaveLength(1);
   });
   test("creates only a draft when the tag has no release", async () => {
@@ -70,11 +98,12 @@ describe("release draft safety", () => {
     expect(result.code).not.toBe(0);
     expect(result.calls).toHaveLength(1);
   });
-  test("leaves concurrently created releases unchanged", async () => {
+  test("fails without overwriting a concurrently created release", async () => {
     const result = await run("concurrent");
-    expect(result.code).toBe(0);
-    expect(result.output).toContain("created concurrently");
+    expect(result.code).not.toBe(0);
+    expect(result.error).toContain("created concurrently");
     expect(result.calls).toHaveLength(2);
+    expect(result.calls[1]).not.toContain("--clobber");
   });
   test("requires the package version tag before invoking GitHub", async () => {
     const result = await run("missing", "refs/heads/main");

@@ -5,3 +5,21 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+  - package-ecosystem: bun
+    directories:
+      - /
+      - /website
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      javascript:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /worker
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      python:
+        patterns: ["*"]
