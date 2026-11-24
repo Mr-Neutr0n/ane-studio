@@ -32,6 +32,8 @@ echo "==> Public website"
 
 echo "==> Repository checks"
 bun scripts/check-repository.ts
+# Check committed history too; a clean CI checkout has no working-tree diff.
+git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 git diff --check
 
 echo "verify passed"

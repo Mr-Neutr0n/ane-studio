@@ -6,6 +6,12 @@ const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url
 const app = resolve(process.argv[2] ?? `dist/mac-arm64/${pkg.build.productName}.app`);
 await rm("dist/package-verification.json", { force: true });
 await checkRuntime(join(app, "Contents", "Resources", "runtime"));
+// A broken bundle seal makes Gatekeeper report a downloaded app as damaged.
+const signature = Bun.spawn(["/usr/bin/codesign", "--verify", "--deep", "--strict", app], {
+  stdout: "inherit",
+  stderr: "inherit",
+});
+if ((await signature.exited) !== 0) throw new Error("Packaged app signature is invalid.");
 const child = Bun.spawn(
   ["bunx", "playwright", "test", "--config", "scripts/packaged-playwright.config.ts"],
   {

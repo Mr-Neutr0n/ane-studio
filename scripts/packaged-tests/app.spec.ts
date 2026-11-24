@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -28,9 +28,17 @@ test("self-contained app starts with clean data and a system-only PATH", async (
   );
   const home = await mkdtemp(join(tmpdir(), "ane-package-test-"));
   try {
+    const environment = cleanEnvironment(home);
+    const uvOnPath = await Promise.any(
+      (environment.PATH ?? "").split(":").map((directory) => access(join(directory, "uv"))),
+    ).then(
+      () => true,
+      () => false,
+    );
+    expect(uvOnPath).toBe(false);
     const application = await electron.launch({
       executablePath: join(app, "Contents", "MacOS", pkg.build.productName),
-      env: cleanEnvironment(home),
+      env: environment,
       timeout: 60_000,
     });
     try {
@@ -42,11 +50,11 @@ test("self-contained app starts with clean data and a system-only PATH", async (
         "artifacts/packaged-file-icon.png",
         Buffer.from(systemIcon.split(",")[1] ?? "", "base64"),
       );
-      const window = await application.firstWindow();
-      await expect(window.getByText("LFM2.5 230M", { exact: true }).first()).toBeVisible({
+      const page = await application.firstWindow();
+      await expect(page.getByText("LFM2.5 230M", { exact: true }).first()).toBeVisible({
         timeout: 60_000,
       });
-      const result = await window.evaluate(async () => {
+      const result = await page.evaluate(async () => {
         const data = await window.studio.bootstrap();
         return {
           supported: data.hardware.supported,
@@ -61,11 +69,11 @@ test("self-contained app starts with clean data and a system-only PATH", async (
       expect(result.hasToken).toBe(false);
       expect(result.curated).toBeGreaterThanOrEqual(2);
       expect(result.nodeUnavailable).toBe(true);
-      await window.screenshot({ path: "artifacts/packaged-startup.png", fullPage: true });
+      await page.screenshot({ path: "artifacts/packaged-startup.png", fullPage: true });
       const evidence = {
         app,
         version: pkg.version,
-        cleanPathWithoutUv: true,
+        cleanPathWithoutUv: !uvOnPath,
         cleanData: true,
         packagedStartup: "passed",
         ...result,

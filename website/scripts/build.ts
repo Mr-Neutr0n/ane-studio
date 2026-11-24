@@ -22,7 +22,7 @@ function escapeHTML(value: string): string {
       '"': "&quot;",
       "'": "&#39;",
     };
-    return entities[character];
+    return entities[character] ?? character;
   });
 }
 
@@ -80,8 +80,9 @@ export function renderHTML(
       : "",
   };
   const html = template.replace(/\{\{([A-Z_]+)\}\}/g, (_, key: string) => {
-    if (!(key in values)) throw new Error(`Unknown template field: ${key}`);
-    return values[key];
+    const value = values[key];
+    if (value === undefined) throw new Error(`Unknown template field: ${key}`);
+    return value;
   });
   if (/\{\{[^}]+\}\}/.test(html)) throw new Error("Unresolved template field.");
   return html;

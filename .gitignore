@@ -22,6 +22,7 @@ results/
 !.env.example
 
 # Local tools and deployment metadata
+worktrees/
 .vercel/
 .pytest_cache/
 .ruff_cache/

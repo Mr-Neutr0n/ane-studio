@@ -15,7 +15,8 @@
       "!!website/node_modules",
       "!!website/dist",
       "!!website/test-results",
-      "!!website/playwright-report"
+      "!!website/playwright-report",
+      "!!worktrees"
     ]
   },
   "formatter": {
