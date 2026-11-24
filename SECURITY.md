@@ -24,7 +24,7 @@ Models, converted packages, and benchmark reports remain under the local app dat
 
 ## Release trust
 
-Current release automation produces an unsigned, unnotarized Apple Silicon preview. Native runtime relocation uses local ad-hoc signatures where macOS requires them. Those signatures do not prove publisher identity. There is no Apple Developer ID signature or notarization ticket.
+Current release automation produces an unsigned, unnotarized Apple Silicon preview. Native runtime relocation uses local ad-hoc signatures where macOS requires them, and packaging re-seals the whole app bundle with an ad-hoc signature. Those signatures do not prove publisher identity. There is no Apple Developer ID signature or notarization ticket.
 
 Download only from this repository's release page. Verify its ZIP against the `SHA256SUMS` file from the same release. A checksum detects corruption or mismatched files; it does not replace a trusted publisher signature. If you cannot accept that limit, review and run the source instead. Do not disable Gatekeeper globally.
 

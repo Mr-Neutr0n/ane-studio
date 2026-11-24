@@ -65,7 +65,10 @@ async function notices(name: string, parent = join(root, "package.json")) {
     await notices(dependency, packagePath);
 }
 const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-for (const name of Object.keys(pkg.dependencies)) await notices(name);
+// Vite bundles these renderer packages into out/, so they are dev dependencies but still ship.
+const bundledRendererPackages = ["react", "react-dom", "lucide-react"];
+for (const name of [...Object.keys(pkg.dependencies ?? {}), ...bundledRendererPackages])
+  await notices(name);
 await cp(
   join(root, "node_modules", "electron", "dist", "LICENSE"),
   join(noticeRoot, "desktop", "ELECTRON-LICENSE.txt"),

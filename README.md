@@ -14,7 +14,7 @@ A release ZIP includes Python and the locked worker dependencies. You do not nee
 
 ### Unsigned preview builds
 
-These builds have no Apple Developer ID signature and are not notarized. Some bundled native files have local ad-hoc signatures so macOS can execute them. Those signatures do not identify a trusted publisher.
+These builds have no Apple Developer ID signature and are not notarized. The app bundle and its native files have local ad-hoc signatures so macOS can verify the bundle is intact and execute it. Those signatures do not identify a trusted publisher.
 
 1. Download the versioned Apple Silicon ZIP and `SHA256SUMS` from the same release.
 2. In that download directory, run `shasum -a 256 -c SHA256SUMS` in Terminal.

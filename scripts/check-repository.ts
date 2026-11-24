@@ -12,7 +12,7 @@ for (const path of paths) {
   const info = await stat(path).catch(() => undefined);
   if (!info?.isFile()) continue;
   if (
-    /^(?:artifacts|dist|out|results|node_modules)\/|(?:^|\/)\.venv\/|\.ml(?:package|modelc)(?:\/|$)|\.(?:safetensors|gguf)$/.test(
+    /^(?:artifacts|results)\/|(?:^|\/)(?:dist|out|node_modules)\/|(?:^|\/)\.venv\/|\.ml(?:package|modelc)(?:\/|$)|\.(?:safetensors|gguf)$/.test(
       path,
     )
   ) {

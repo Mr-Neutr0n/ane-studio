@@ -37,7 +37,9 @@ describe("static build", () => {
   test("all local assets and anchor destinations exist", async () => {
     const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);
-    const resources = [...html.matchAll(/\b(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
+    const resources = [...html.matchAll(/\b(?:src|href)="([^"]+)"/g)].map(
+      (match) => match[1] ?? "",
+    );
     for (const resource of resources) {
       if (resource.startsWith("#")) {
         expect(ids).toContain(resource.slice(1));
