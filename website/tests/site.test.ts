@@ -120,7 +120,7 @@ describe("static build", () => {
     }
   });
 
-  test("production and preview enforce the same security headers", async () => {
+  test("vercel.json enforces the production security headers", async () => {
     const vercel = JSON.parse(await readFile(resolve(websiteRoot, "../vercel.json"), "utf8"));
     expect(vercel.outputDirectory).toBe("website/dist");
     const headers = Object.fromEntries(
@@ -177,7 +177,10 @@ describe("canonical configuration", () => {
       "https://ane-studio-site-example.vercel.app/",
     );
     expect(resolveSiteURL("https://confirmed.example/")).toBe("https://confirmed.example/");
-    expect(() => resolveSiteURL(null, "untrusted.example")).toThrow();
+    // An attached custom domain replaces the vercel.app production hostname.
+    expect(resolveSiteURL(null, "ane.example")).toBe("https://ane.example/");
+    expect(() => resolveSiteURL(null, "ane.example/path")).toThrow();
+    expect(() => resolveSiteURL(null, "user@ane.example")).toThrow();
     for (const invalid of [
       "http://example.com",
       "https://user:pass@example.com",
