@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { type Dirent, mkdirSync, mkdtempSync } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { isWorkerEvent, type WorkerEvent, type WorkerResponse } from "../shared/contracts";
@@ -31,6 +31,28 @@ export interface WorkerOptions {
   requestTimeoutMs?: number;
   onEvent(event: WorkerEvent): void;
   onLog(line: string): void;
+}
+
+const TEMPORARY_DIRECTORY_PREFIX = ".worker-tmp-";
+
+/**
+ * Remove worker temporary directories that a crashed or force-quit app left behind.
+ * They can hold multi-GB Core ML compilations. Call this before any worker starts.
+ */
+export async function removeStaleWorkerDirectories(dataDirectory: string): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dataDirectory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  // Settle every removal, so a fast failure cannot return while a large one still runs.
+  await Promise.allSettled(
+    entries
+      // A symlink's Dirent is never a directory, so a planted link is never followed.
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(TEMPORARY_DIRECTORY_PREFIX))
+      .map((entry) => rm(join(dataDirectory, entry.name), { recursive: true, force: true })),
+  );
 }
 
 const REQUEST_TIMEOUTS: Record<string, number> = {
@@ -91,7 +113,9 @@ export class WorkerClient {
     // The backend moves completed Core ML compilations to explicit destinations
     // under Python's TMPDIR before inference. Own that directory for crash cleanup.
     mkdirSync(this.options.dataDirectory, { recursive: true, mode: 0o700 });
-    const temporaryDirectory = mkdtempSync(join(this.options.dataDirectory, ".worker-tmp-"));
+    const temporaryDirectory = mkdtempSync(
+      join(this.options.dataDirectory, TEMPORARY_DIRECTORY_PREFIX),
+    );
     const startupError = packaged
       ? "The bundled Python runtime could not start. Download a fresh copy of ANE Studio."
       : "The model worker could not start. Install uv, then run bun run worker:setup. Set ANE_STUDIO_UV to its absolute path if needed.";
@@ -250,17 +274,11 @@ export class WorkerClient {
     });
   }
 
-  async restart(token?: string): Promise<void> {
-    await this.stop();
-    this.options.token = token;
-    await this.start();
-  }
-
   async stop(): Promise<void> {
     const session = this.session;
     if (session) await this.terminate(session);
     else if (this.stopping) await this.stopping;
-    // Do not let a cancelled startup survive a public stop/restart boundary.
+    // Do not let a cancelled startup survive a public stop boundary.
     await this.starting?.catch(() => {});
   }
 

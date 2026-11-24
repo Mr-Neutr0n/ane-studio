@@ -47,6 +47,7 @@ const state = vi.hoisted(() => ({
   hasToken: vi.fn<() => Promise<boolean>>(),
   saveToken: vi.fn<(token: string) => Promise<void>>(),
   deleteToken: vi.fn<() => Promise<void>>(),
+  removeStale: vi.fn<(directory: string) => Promise<void>>(),
 }));
 vi.mock("@electron-toolkit/utils", () => ({
   is: {
@@ -56,6 +57,7 @@ vi.mock("@electron-toolkit/utils", () => ({
   },
 }));
 vi.mock("../src/main/worker", () => ({
+  removeStaleWorkerDirectories: state.removeStale,
   WorkerClient: class {
     constructor(options: WorkerOptions) {
       state.workerOptions.push(options);
@@ -191,6 +193,7 @@ beforeEach(() => {
   state.saveToken.mockResolvedValue(undefined);
   state.deleteToken.mockResolvedValue(undefined);
   state.stop.mockResolvedValue(undefined);
+  state.removeStale.mockResolvedValue(undefined);
   state.request.mockImplementation(async (command) =>
     command === "catalog" ? { curatedModels: [], models: [] } : {},
   );
@@ -209,6 +212,24 @@ describe("Electron process and renderer security", () => {
     expect(state.windows).toHaveLength(0);
     expect(state.handlers.size).toBe(0);
     expect(state.workerOptions).toHaveLength(0);
+    expect(state.removeStale).not.toHaveBeenCalled();
+  });
+
+  it("sweeps stale worker directories without delaying the window or racing a worker", async () => {
+    const cleanup = deferred<void>();
+    state.removeStale.mockReturnValueOnce(cleanup.promise);
+    await start();
+    expect(state.removeStale).toHaveBeenCalledExactlyOnceWith("/test/appData/ANE Studio");
+    // The window and IPC exist while the sweep is still running.
+    expect(state.windows).toHaveLength(1);
+    const bootstrap = invoke("studio:bootstrap");
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    expect(state.readToken).not.toHaveBeenCalled();
+    expect(state.workerOptions).toHaveLength(0);
+    // A failed sweep must not block the worker.
+    cleanup.reject(new Error("cleanup failed"));
+    await bootstrap;
+    expect(state.workerOptions).toHaveLength(1);
   });
 
   it("restores and focuses the existing window for a duplicate Finder launch", async () => {
