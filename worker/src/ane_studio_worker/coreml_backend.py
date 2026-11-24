@@ -473,8 +473,8 @@ def _eos_token_ids(tokenizer: Any, source: Path | None = None) -> frozenset[int]
     path = source / "generation_config.json" if source is not None else None
     if (
         path is not None
-        and path.is_file()
         and not path.is_symlink()
+        and path.is_file()
         and path.stat().st_size <= 1_048_576
     ):
         try:
@@ -520,7 +520,9 @@ class CoreMLRuntime:
             )
         generated: list[int] = []
         durations: list[float] = []
-        eos = getattr(self, "eos_token_ids", None) or _eos_token_ids(self.tokenizer)
+        eos = getattr(self, "eos_token_ids", None)
+        if eos is None:
+            eos = _eos_token_ids(self.tokenizer)
         # Sampling draws fresh entropy per call. Temperature 0 stays greedy.
         rng = self.np.random.default_rng()
         capacity = self.sequence_length - len(ids)

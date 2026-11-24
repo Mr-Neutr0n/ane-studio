@@ -10,7 +10,13 @@ from .catalog import CURATED_MODELS
 from .coreml_backend import POLICIES, CoreMLRuntime, benchmark, convert_model, planned_placement
 from .events import EventWriter, event, now, redact_credentials
 from .hardware import hardware_info
-from .huggingface import download_model, inspect_model, replace_source, validate_model_id
+from .huggingface import (
+    download_model,
+    inspect_model,
+    remove_previous_source,
+    replace_source,
+    validate_model_id,
+)
 from .storage import (
     data_root,
     directory_digest,
@@ -90,6 +96,7 @@ class Service:
         self._clear_runtimes()
         self.verified_artifacts.clear()
         remove_stale_compile_directories()
+        remove_previous_source(source)
         try:
             previous = load_manifest(model_id)
         except (OSError, ValueError, RecursionError):
@@ -115,8 +122,9 @@ class Service:
 
         def before_replace() -> None:
             nonlocal replaced
-            replaced = True
             write_manifest(model_id, record)
+            # Only a written manifest means the previous ready model is gone.
+            replaced = True
 
         if not keep_previous:
             before_replace()
@@ -369,7 +377,7 @@ def remove_stale_compile_directories() -> None:
         if artifacts.is_symlink() or artifacts.parent.is_symlink():
             continue
         for path in artifacts.glob(".ane-studio-compile-*"):
-            if path.is_dir() and not path.is_symlink():
+            if not path.is_symlink() and path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
 
 

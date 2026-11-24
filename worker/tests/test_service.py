@@ -471,3 +471,34 @@ def test_prepare_events_omit_unknown_parameter_count(monkeypatch) -> None:
     assert all(
         "parameterCount" not in value["model"] for value in events if value["kind"] == "model"
     )
+
+
+def test_failed_manifest_write_before_save_keeps_ready_model(monkeypatch) -> None:
+    record, _, _ = ready_model()
+    mock_prepare(monkeypatch, passed_parity())
+    write = service.write_manifest
+    events = []
+
+    def convert(model_id, source, package, *args, before_save=None):
+        def full_disk(*args):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(service, "write_manifest", full_disk)
+        before_save()
+
+    monkeypatch.setattr(service, "convert_model", convert)
+    with pytest.raises(OSError, match="No space"):
+        Service(events.append).prepare("request", {"modelId": "org/model"})
+    monkeypatch.setattr(service, "write_manifest", write)
+    assert service.load_manifest("org/model") == record
+    assert events[-1]["model"] == record
+
+
+def test_prepare_removes_a_leftover_previous_source(monkeypatch) -> None:
+    ready_model()
+    mock_prepare(monkeypatch, passed_parity())
+    leftover = service.model_path("org/model", "source.old")
+    leftover.mkdir(parents=True)
+    (leftover / "model.safetensors").write_text("old")
+    Service(lambda value: None).prepare("request", {"modelId": "org/model"})
+    assert not leftover.exists()

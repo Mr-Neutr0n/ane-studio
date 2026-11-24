@@ -398,20 +398,27 @@ def test_sampling_is_not_reseeded_for_each_generation(np) -> None:
     runtime.tokenizer = NonRoundTripTokenizer([10])
     runtime.eos_token_ids = frozenset({-1})
     seen = []
+    logits = np.ones((1, 1000))
 
     def predict(feed):
         seen.append(int(feed["input_ids"][0][int(feed["position"][0])]))
-        return {"logits": np.ones((1, 1000))}
+        return {"logits": logits}
 
     runtime.model = SimpleNamespace(predict=predict)
     messages = [{"role": "user", "content": "hello"}]
     first = runtime.generate(messages, 6, 1.0)
     second = runtime.generate(messages, 6, 1.0)
-    # Six uniform draws from 1,000 tokens repeat by chance with probability 1e-18.
+    # Each call feeds back five sampled tokens. Two uniform runs over 1,000 tokens
+    # match by chance with probability 1e-15.
     assert seen[1:6] != seen[7:12]
     assert first["tokens"] == second["tokens"] == 6
-    greedy = [runtime.generate(messages, 3, 0)["text"] for _ in range(2)]
-    assert greedy[0] == greedy[1]
+    # Temperature 0 stays greedy: every call picks the argmax token, never a sample.
+    seen.clear()
+    logits = np.zeros((1, 1000))
+    logits[0, 7] = 1
+    for _ in range(2):
+        runtime.generate(messages, 3, 0)
+    assert seen[1:3] == seen[4:6] == [7, 7]
 
 
 def test_benchmark_rejects_oversized_prompt_before_loading_policies(monkeypatch) -> None:

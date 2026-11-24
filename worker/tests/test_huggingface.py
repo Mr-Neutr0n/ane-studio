@@ -215,3 +215,48 @@ def test_interrupted_staging_resumes_only_for_its_revision(monkeypatch, tmp_path
     assert (staging / "model.safetensors").exists()
     hub.download_model("org/model", destination, "b" * 40)
     assert not (staging / "model.safetensors").exists()
+
+
+def test_replace_source_clears_a_leftover_previous_source(monkeypatch, tmp_path: Path) -> None:
+    destination = tmp_path / "source"
+    fake_snapshot(monkeypatch, ["config.json"])
+    hub.replace_source(hub.download_model("org/model", destination, REVISION), destination)
+    # A stop during the last removal leaves source.old behind, sometimes as a file.
+    (tmp_path / "source.old").write_text("stale")
+    fake_snapshot(monkeypatch, ["config.json"])
+    hub.replace_source(hub.download_model("org/model", destination, "b" * 40), destination)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["source"]
+
+
+def test_previous_source_symlink_is_rejected(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    (tmp_path / "source.old").symlink_to(outside)
+    with pytest.raises(ValueError, match="symbolic link"):
+        hub.remove_previous_source(tmp_path / "source")
+    assert (outside / "keep.txt").exists()
+
+
+def test_symlinked_destination_is_rejected_before_it_is_read(monkeypatch, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "source").symlink_to(outside)
+    calls = fake_snapshot(monkeypatch, ["config.json"])
+    with pytest.raises(ValueError, match="symbolic links"):
+        hub.download_model("org/model", tmp_path / "source", REVISION)
+    assert calls == []
+    assert list(outside.iterdir()) == []
+
+
+def test_unreadable_marker_and_file_staging_path_restage_cleanly(
+    monkeypatch, tmp_path: Path
+) -> None:
+    destination = tmp_path / "source"
+    destination.mkdir()
+    (destination / hub.REVISION_MARKER).write_bytes(b"\xff\xfe")
+    (tmp_path / "source.partial").write_text("not a directory")
+    fake_snapshot(monkeypatch, ["config.json"])
+    staged = hub.download_model("org/model", destination, REVISION)
+    assert staged == tmp_path / "source.partial"
+    assert (staged / hub.REVISION_MARKER).read_text().strip() == REVISION
