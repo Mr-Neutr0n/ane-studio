@@ -21,23 +21,25 @@ async function run(args: string[]) {
   return { code, output, error };
 }
 // The releases/tags endpoint omits drafts, so list every release, drafts included.
-const existing = await run([
-  "gh",
-  "api",
-  "--paginate",
-  `repos/${repository}/releases`,
-  "--jq",
-  `.[] | select(.tag_name == "${tag}") | .id`,
-]);
-if (existing.code !== 0)
+const listed = await run(["gh", "api", "--paginate", "--slurp", `repos/${repository}/releases`]);
+if (listed.code !== 0)
   throw new Error("Cannot check the existing release. No release was changed.");
-if (existing.output.trim()) {
-  if (checkOnly) {
-    throw new Error(
-      `Release ${tag} already exists, possibly as a draft. Delete it before rebuilding.`,
-    );
-  }
-  console.log(`Release ${tag} already exists. Its assets were left unchanged.`);
+let pages: unknown;
+try {
+  pages = JSON.parse(listed.output);
+} catch {
+  throw new Error("Cannot read the release list. No release was changed.");
+}
+if (!Array.isArray(pages) || !pages.every(Array.isArray))
+  throw new Error("Unexpected release list. No release was changed.");
+const exists = (pages as unknown[][])
+  .flat()
+  .some((release) => (release as { tag_name?: unknown } | null)?.tag_name === tag);
+if (exists) {
+  // Fail so a run that did not upload its new archive never reports success.
+  throw new Error(
+    `Release ${tag} already exists, possibly as a draft. Its assets were left unchanged. Delete it before rebuilding.`,
+  );
 } else if (checkOnly) {
   console.log(`No release exists for ${tag}.`);
 } else {
@@ -60,7 +62,7 @@ if (existing.output.trim()) {
   if (result.code !== 0) {
     // A maintainer can publish between the lookup and create. Never overwrite assets.
     if (result.error.includes("already_exists") || result.error.includes("already exists")) {
-      console.log(`Release ${tag} was created concurrently. Its assets were left unchanged.`);
+      throw new Error(`Release ${tag} was created concurrently. Its assets were left unchanged.`);
     } else
       throw new Error(
         "Draft creation failed. Inspect the release before retrying; no existing assets were overwritten.",

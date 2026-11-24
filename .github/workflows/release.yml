@@ -85,7 +85,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 10
     permissions:
-      # Only this job, which runs no build or dependency scripts, can write releases.
+      # Like preflight, this job runs no build or dependency scripts. Only build is read-only.
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
