@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import traceback
-from typing import Any
+from typing import Any, TextIO
 
 from .events import redact_credentials
 from .service import Service
 
 _LOCK = threading.Lock()
 MAX_REQUEST_LENGTH = 1_048_576
+# Set by main(). Protocol lines go here, never to whatever now owns fd 1.
+_PROTOCOL: TextIO | None = None
 
 
 def reject_constant(value: str) -> None:
@@ -32,8 +35,20 @@ def write(value: dict[str, Any]) -> None:
         text = json.dumps(
             redact_values(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False
         )
-        sys.stdout.write(text + "\n")
-        sys.stdout.flush()
+        stream = _PROTOCOL or sys.stdout
+        stream.write(text + "\n")
+        stream.flush()
+
+
+def claim_protocol_stream() -> TextIO:
+    # Dependencies print to sys.stdout and native code writes to fd 1. Keep a
+    # private duplicate of fd 1 for protocol lines and send everything else to
+    # standard error, which the supervisor treats as a technical log.
+    sys.stdout.flush()
+    stream = os.fdopen(os.dup(1), "w", encoding="utf-8", newline="\n")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    return stream
 
 
 def process(service: Service, request: Any) -> None:
@@ -72,6 +87,8 @@ def process(service: Service, request: Any) -> None:
 
 
 def main() -> None:
+    global _PROTOCOL
+    _PROTOCOL = claim_protocol_stream()
     service = Service(write)
     while line := sys.stdin.readline(MAX_REQUEST_LENGTH + 1):
         if len(line) > MAX_REQUEST_LENGTH:

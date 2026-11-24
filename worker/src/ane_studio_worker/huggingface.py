@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,9 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from huggingface_hub.utils import validate_repo_id
 
 from .catalog import KNOWN_FAILED_REVISIONS, SUPPORTED_ARCHITECTURES
+
+# Names the one revision whose files a source directory may contain.
+REVISION_MARKER = ".ane-studio-revision"
 
 
 def token() -> str | bool:
@@ -37,8 +42,11 @@ def pinned_revision(revision: Any) -> str:
 def inspect_model(model_id: str) -> dict[str, Any]:
     model_id = validate_model_id(model_id)
     access_token = token()
-    info = HfApi(token=access_token).model_info(model_id, files_metadata=True)
+    info = HfApi(token=access_token).model_info(model_id)
     revision = pinned_revision(info.sha)
+    # The Hub resolves case variants and renames. Store models under one canonical ID.
+    with suppress(ValueError):
+        model_id = validate_model_id(getattr(info, "id", None))
     config_path = Path(
         hf_hub_download(model_id, "config.json", revision=revision, token=access_token)
     )
@@ -86,18 +94,50 @@ def inspect_model(model_id: str) -> dict[str, Any]:
     }
 
 
+def _marked_revision(directory: Path) -> str | None:
+    marker = directory / REVISION_MARKER
+    if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 64:
+        return None
+    try:
+        return marker.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _reject_symlinks(directory: Path) -> None:
+    if directory.is_symlink() or (
+        directory.exists() and any(path.is_symlink() for path in directory.rglob("*"))
+    ):
+        raise ValueError("The model download directory must not contain symbolic links.")
+
+
 def download_model(model_id: str, destination: Path, revision: str) -> Path:
+    """Download one pinned revision and return the directory that holds it.
+
+    A local directory only collects missing files. Files from another revision
+    would remain, so a different revision downloads into a separate staging
+    directory. Call replace_source() to move it into place.
+    """
     model_id = validate_model_id(model_id)
     revision = pinned_revision(revision)
-    if destination.is_symlink():
-        raise ValueError("The model download directory must not contain symbolic links.")
-    if destination.exists() and any(path.is_symlink() for path in destination.rglob("*")):
-        raise ValueError("The model download directory must not contain symbolic links.")
-    destination.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_name(f"{destination.name}.partial")
+    # Check links before reading anything inside either directory.
+    for directory in (destination, staging):
+        _reject_symlinks(directory)
+    target = destination
+    if not destination.is_dir() or _marked_revision(destination) != revision:
+        target = staging
+        if target.exists() and not target.is_dir():
+            target.unlink()
+        elif target.exists() and _marked_revision(target) != revision:
+            shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    if _marked_revision(target) != revision:
+        (target / REVISION_MARKER).write_text(revision + "\n", encoding="utf-8")
     snapshot_download(
         repo_id=model_id,
         revision=revision,
-        local_dir=destination,
+        local_dir=target,
         token=token(),
         max_workers=2,
         allow_patterns=[
@@ -111,4 +151,28 @@ def download_model(model_id: str, destination: Path, revision: str) -> Path:
             "README*",
         ],
     )
-    return destination
+    return target
+
+
+def remove_previous_source(destination: Path) -> None:
+    """Remove the `<name>.old` directory a replaced source leaves behind."""
+    previous = destination.with_name(f"{destination.name}.old")
+    if previous.is_symlink():
+        raise ValueError("The previous model source must not be a symbolic link.")
+    if previous.is_dir():
+        shutil.rmtree(previous)
+    elif previous.exists():
+        previous.unlink()
+
+
+def replace_source(staged: Path, destination: Path) -> None:
+    if staged == destination:
+        return
+    previous = destination.with_name(f"{destination.name}.old")
+    # Clear a leftover first so the rename below cannot fail after the manifest changed.
+    remove_previous_source(destination)
+    if destination.exists():
+        destination.rename(previous)
+    staged.rename(destination)
+    # A stop during this removal leaves `.old`, which the next prepare removes.
+    remove_previous_source(destination)

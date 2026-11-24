@@ -24,7 +24,7 @@ The renderer has context isolation and sandboxing enabled. It cannot access Node
 
 The main process owns window lifecycle, credential encryption, worker supervision, cancellation, and IPC validation. Every IPC handler checks the sender, main frame, and loaded document URL. The shared contract validates command names, payload fields, model IDs, policies, and request sizes. External links need an allowed HTTPS host and native user confirmation.
 
-The Python worker owns model metadata, downloads, conversion, parity, chat, planned placement, and benchmark files. It emits compact JSON objects, one per line. Standard error is treated as a technical log and never parsed as protocol data.
+The Python worker owns model metadata, downloads, conversion, parity, chat, planned placement, and benchmark files. It emits compact JSON objects, one per line, on a private duplicate of standard output. At startup it redirects file descriptor 1 to standard error, so dependency output cannot corrupt the protocol. Standard error is treated as a technical log and never parsed as protocol data.
 
 The desktop app uses a single-instance lock for its data directory. Standalone CLI workers do not share that lock. Give CLI smoke tests a separate `ANE_STUDIO_HOME`; do not run two workers against the same model directory.
 
@@ -61,7 +61,7 @@ the pinned implementation, rejected precision variants, and numerical evidence.
 
 The default runtime uses one fixed 64-token graph. It right-pads contiguous token IDs and passes the current final-token position into the model. The trace mask is valid only for that input contract, not left padding or gaps in an attention mask. Each generation step runs the complete fixed graph, selects the last hidden state, and projects it into one vocabulary logit vector.
 
-Generation feeds token IDs directly. It does not decode and re-encode the prompt at every step. The chat template, history, prompt, and reply share the fixed context. A prompt that fills the context is rejected with a request to shorten it or start a new chat. This is not a stateful decoder or a sliding-window chat runtime.
+Generation stops at the tokenizer's end token or any `eos_token_id` in the checkpoint's `generation_config.json`. Generation feeds token IDs directly. It does not decode and re-encode the prompt at every step. The chat template, history, prompt, and reply share the fixed context. A prompt that fills the context is rejected with a request to shorten it or start a new chat. This is not a stateful decoder or a sliding-window chat runtime.
 
 A later stateful runtime should split prefill and decode, use Core ML state for KV or convolution caches where supported, and preserve the current parity and placement contracts.
 
@@ -107,7 +107,7 @@ Chat, benchmarks, and placement checks validate the manifest and artifact digest
 
 Conversion runs synchronously inside the worker. Cancel stops the worker process group and rejects pending requests. A clean worker starts on the next request. Saving or deleting a token also stops the existing worker before the next request uses the new credentials. Startup and requests have time limits. Late responses from a stopped worker cannot update a replacement session.
 
-Hugging Face and Core ML files already flushed to disk remain inspectable. An interrupted record does not pass parity and can be prepared again. A later preparation attempt overwrites the canonical artifact only after conversion reaches the save stage. Closing the renderer stops its worker. App shutdown waits for worker termination.
+Hugging Face and Core ML files already flushed to disk remain inspectable. An interrupted record does not pass parity and can be prepared again. A later preparation attempt overwrites the canonical artifact only after conversion reaches the save stage. A ready model keeps its ready manifest, source, and artifact until the attempt reaches the save stage or replaces the source, so an earlier failure or cancellation leaves it usable. A new source revision downloads into `source.partial/` and replaces `source/` only after the download completes, so files from an older revision cannot remain. Each preparation removes conversion scratch that a stopped worker left under `artifacts/`. Closing the renderer stops its worker. App shutdown waits for worker termination.
 
 ## Packaged runtime
 

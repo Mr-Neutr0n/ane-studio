@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import gc
-import json
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +10,15 @@ from .catalog import CURATED_MODELS
 from .coreml_backend import POLICIES, CoreMLRuntime, benchmark, convert_model, planned_placement
 from .events import EventWriter, event, now, redact_credentials
 from .hardware import hardware_info
-from .huggingface import download_model, inspect_model, validate_model_id
+from .huggingface import (
+    download_model,
+    inspect_model,
+    remove_previous_source,
+    replace_source,
+    validate_model_id,
+)
 from .storage import (
+    data_root,
     directory_digest,
     directory_signature,
     list_manifests,
@@ -21,6 +28,7 @@ from .storage import (
     model_slug,
     normalize_manifest,
     remove_model,
+    write_json_atomic,
     write_manifest,
 )
 
@@ -32,8 +40,7 @@ class Service:
         self.verified_artifacts: dict[Path, tuple[str, tuple[tuple[Any, ...], ...]]] = {}
 
     def handle(self, request_id: str, command: str, payload: dict[str, Any]) -> Any:
-        if not isinstance(command, str) or not isinstance(payload, dict):
-            raise ValueError("Request requires a command and object payload.")
+        # cli.process validates the command and payload types.
         handlers = {
             "health": self.health,
             "catalog": self.catalog,
@@ -82,10 +89,22 @@ class Service:
         info = inspect_model(model_id)
         if not info["supported"]:
             raise ValueError(str(info["reason"]))
+        # Case variants of one Hub repository share one local model directory.
+        model_id = info["id"]
         source = model_path(model_id, "source")
         package = model_path(model_id, "artifacts", "model.mlpackage")
         self._clear_runtimes()
         self.verified_artifacts.clear()
+        remove_stale_compile_directories()
+        remove_previous_source(source)
+        try:
+            previous = load_manifest(model_id)
+        except (OSError, ValueError, RecursionError):
+            previous = None
+        # A ready model stays usable until this attempt replaces its source or package.
+        keep_previous = bool(
+            previous and previous.get("state") == "ready" and parity_passed(previous.get("parity"))
+        )
         record: dict[str, Any] = {
             "id": model_id,
             "slug": model_slug(model_id),
@@ -99,7 +118,16 @@ class Service:
             "updatedAt": now(),
         }
         record = normalize_manifest(record)
-        write_manifest(model_id, record)
+        replaced = False
+
+        def before_replace() -> None:
+            nonlocal replaced
+            write_manifest(model_id, record)
+            # Only a written manifest means the previous ready model is gone.
+            replaced = True
+
+        if not keep_previous:
+            before_replace()
         event(self.write, request_id, "model", model=record)
         try:
             event(
@@ -110,9 +138,14 @@ class Service:
                 progress=0.12,
                 message="Downloading pinned model files",
             )
-            download_model(model_id, source, info["revision"])
+            staged_source = download_model(model_id, source, info["revision"])
             record.update(state="converting", updatedAt=now())
-            write_manifest(model_id, record)
+            if staged_source != source:
+                # Record the new revision before the old source disappears.
+                before_replace()
+                replace_source(staged_source, source)
+            elif replaced:
+                write_manifest(model_id, record)
             event(self.write, request_id, "model", model=record)
             converted = convert_model(
                 model_id,
@@ -122,6 +155,7 @@ class Service:
                 sequence_length,
                 request_id,
                 self.write,
+                before_save=before_replace,
             )
             digest, size = directory_digest(package)
             parity = converted["parity"]
@@ -157,6 +191,10 @@ class Service:
             )
             return record
         except Exception as error:
+            if not replaced:
+                # Nothing on disk changed. Report the previous ready model again.
+                event(self.write, request_id, "model", model=previous)
+                raise
             record.update(
                 state="failed",
                 error=redact_credentials(f"{type(error).__name__}: {error}"),
@@ -229,10 +267,7 @@ class Service:
         )
         results = model_path(model_id, "results")
         results.mkdir(parents=True, exist_ok=True)
-        path = results / f"benchmark-{now().replace(':', '-')}.json"
-        path.write_text(
-            json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
-        )
+        write_json_atomic(results / f"benchmark-{now().replace(':', '-')}.json", report)
         event(
             self.write,
             request_id,
@@ -247,6 +282,8 @@ class Service:
         model_id = required_model_id(payload)
         policy = required_policy(payload.get("policy", "cpuAndNeuralEngine"))
         _, _, _, package = self._paths(model_id)
+        # Compiling a plan while a runtime is loaded can exhaust memory, as in benchmark.
+        self._clear_runtimes()
         event(
             self.write,
             request_id,
@@ -328,6 +365,20 @@ class Service:
             self.verified_artifacts.clear()
             self.verified_artifacts[package] = (expected, signature)
         return record, directory, source, package
+
+
+def remove_stale_compile_directories() -> None:
+    # One worker owns a data directory, and it converts one model at a time.
+    # Scratch that exists now was left by a stopped worker.
+    models = data_root() / "models"
+    if models.is_symlink():
+        return
+    for artifacts in models.glob("*/artifacts"):
+        if artifacts.is_symlink() or artifacts.parent.is_symlink():
+            continue
+        for path in artifacts.glob(".ane-studio-compile-*"):
+            if not path.is_symlink() and path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
 
 
 def parity_passed(parity: Any) -> bool:

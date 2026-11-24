@@ -252,6 +252,20 @@ function App(): React.JSX.Element {
     if (!cancellingRef.current) setError(errorMessage(reason));
   }
 
+  /** Replace model records with the manifests on disk, keeping models only inspected here. */
+  async function refreshModels(): Promise<void> {
+    const catalog = await window.studio.request<{ models: ModelRecord[] }>("catalog");
+    setBootstrap((current) => {
+      if (!current) return current;
+      // A cancelled metadata request may not have written a manifest yet.
+      // Keep models inspected in this window until they are prepared or removed.
+      const inspected = current.models.filter(
+        (model) => !model.slug && !catalog.models.some((saved) => saved.id === model.id),
+      );
+      return { ...current, models: [...catalog.models, ...inspected] };
+    });
+  }
+
   async function prepare(): Promise<void> {
     if (!bootstrap?.hardware.supported || !beginOperation("prepare")) return;
     try {
@@ -260,6 +274,8 @@ function App(): React.JSX.Element {
         sequenceLength: 64,
       });
       updateModel(record);
+      // The worker stores models under the Hub's canonical ID, which can differ in case.
+      if (record.id !== selectedId) setSelectedId(record.id);
       if (!modelCanRun(record)) {
         setError(
           record.error ||
@@ -268,6 +284,9 @@ function App(): React.JSX.Element {
       }
     } catch (reason) {
       reportError(reason);
+      // A crashed or timed-out worker never reports the model state it left on disk.
+      // A failed re-prepare can leave the previous ready model intact.
+      if (!cancellingRef.current) await refreshModels().catch(() => undefined);
     } finally {
       finishOperation();
     }
@@ -358,9 +377,11 @@ function App(): React.JSX.Element {
       }>("inspect", { modelId: id });
       if (!inspected.supported)
         throw new Error(inspected.reason || "This architecture is not supported yet.");
-      if (!bootstrap?.models.some((model) => model.id === id)) {
+      // The worker stores models under the Hub's canonical ID, not the typed spelling.
+      const canonicalId = inspected.id;
+      if (!bootstrap?.models.some((model) => model.id === canonicalId)) {
         updateModel({
-          id,
+          id: canonicalId,
           slug: "",
           state: "available",
           architecture: inspected.architecture,
@@ -370,7 +391,7 @@ function App(): React.JSX.Element {
           updatedAt: new Date().toISOString(),
         });
       }
-      setSelectedId(id);
+      setSelectedId(canonicalId);
       setGeneration(undefined);
       setMessages([]);
       setPrompt("");
@@ -390,16 +411,7 @@ function App(): React.JSX.Element {
     setCancelling(true);
     try {
       await window.studio.cancel();
-      const catalog = await window.studio.request<{ models: ModelRecord[] }>("catalog");
-      setBootstrap((current) => {
-        if (!current) return current;
-        // A cancelled metadata request may not have written a manifest yet.
-        // Keep models inspected in this window until they are prepared or removed.
-        const inspected = current.models.filter(
-          (model) => !model.slug && !catalog.models.some((saved) => saved.id === model.id),
-        );
-        return { ...current, models: [...catalog.models, ...inspected] };
-      });
+      await refreshModels();
       setNotice(
         "Operation cancelled. Files already downloaded stay on this Mac. You can try again.",
       );

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -79,3 +81,66 @@ def test_no_signposts_cannot_be_reported_as_a_negative_ane_result(tmp_path):
     path.write_text("<trace-query-result/>")
     with pytest.raises(ValueError, match="expected os-signpost"):
         profile_summary.summarize(path, path, {"generations": []})
+
+
+def test_interval_spanning_two_generations_is_counted_once(tmp_path):
+    signposts = tmp_path / "signposts.xml"
+    begin_end = "".join(
+        f'<row><time>{time}</time><process fmt="python (123)"/><id>{identifier}</id>'
+        f'<type fmt="{kind}"/><name>local_generation</name>'
+        "<subsystem>dev.harikrishna.anestudio</subsystem></row>"
+        for time, identifier, kind in [
+            (100, 1, "Begin"),
+            (200, 1, "End"),
+            (210, 2, "Begin"),
+            (300, 2, "End"),
+        ]
+    )
+    signposts.write_text(
+        xml_table(["time", "process", "identifier", "event-type", "name", "subsystem"], begin_end)
+    )
+    ane = tmp_path / "ane.xml"
+    ane.write_text(
+        xml_table(
+            ["start", "duration", "event-label"],
+            '<row><time>190</time><duration>30</duration><label fmt="Prediction"/></row>',
+            "ane-hw-intervals-internal",
+        )
+    )
+    workload = {
+        "modelId": "org/model",
+        "processId": 123,
+        "revision": "a" * 40,
+        "artifactSha256": "b" * 64,
+        "requestedPolicy": "cpuAndNeuralEngine",
+        "generations": [{"samples": [1]}, {"samples": [1]}],
+    }
+    summary = profile_summary.summarize(signposts, ane, workload)
+    assert summary["anePredictionsPerGeneration"] == [1, 1]
+    assert summary["anePredictionIntervalsInTrace"] == 1
+    assert summary["anePredictionIntervalsOverlappingGeneration"] == 1
+
+
+def test_workload_without_trace_is_rejected_clearly(monkeypatch, tmp_path):
+    workload = tmp_path / "workload.json"
+    workload.write_text(json.dumps({"tracePath": None}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "summarize-profile.py",
+            "--trace",
+            str(tmp_path / "run.trace"),
+            "--workload",
+            str(workload),
+            "--output",
+            str(tmp_path / "summary.json"),
+        ],
+    )
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("export must not run without a recorded trace")
+
+    monkeypatch.setattr(profile_summary.subprocess, "run", unexpected)
+    with pytest.raises(ValueError, match="no trace"):
+        profile_summary.main()
